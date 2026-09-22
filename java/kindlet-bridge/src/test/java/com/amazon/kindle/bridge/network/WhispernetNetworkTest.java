@@ -354,6 +354,106 @@ public class WhispernetNetworkTest {
     }
 
     // -------------------------------------------------------------------------
+    // HttpIpcCodec tests
+    // -------------------------------------------------------------------------
+
+    static void testHttpIpcCodec() {
+        System.out.println("\n-- HttpIpcCodec --");
+
+        // Round-trip request: GET with headers and empty body
+        {
+            HttpRequest req = new HttpRequest("GET", "http://example.com/path");
+            req = req.withHeader("Host", "example.com").withHeader("Accept", "text/html");
+            byte[] payload = HttpIpcCodec.encodeRequest(req);
+            check("encode request non-null", payload != null);
+            HttpRequest decoded = HttpIpcCodec.decodeRequest(payload);
+            check("decode request non-null", decoded != null);
+            if (decoded != null) {
+                check("request method round-trip", "GET".equals(decoded.getMethod()));
+                check("request url round-trip",    "http://example.com/path".equals(decoded.getUrl()));
+                check("request header count",      decoded.getHeaders().size() == 2);
+                check("request body empty",        decoded.getBody().length == 0);
+            }
+        }
+
+        // Round-trip request: POST with binary body
+        {
+            byte[] body = {0x00, 0x01, (byte) 0xFF};
+            HttpRequest req = new HttpRequest("POST", "http://example.com/api",
+                                              new java.util.Vector(), body);
+            byte[] payload = HttpIpcCodec.encodeRequest(req);
+            HttpRequest decoded = HttpIpcCodec.decodeRequest(payload);
+            check("POST binary body round-trip", decoded != null
+                  && decoded.getBody().length == 3
+                  && decoded.getBody()[2] == (byte) 0xFF);
+        }
+
+        // Truncated payload → null
+        {
+            HttpRequest req = new HttpRequest("GET", "http://x.com/");
+            byte[] payload = HttpIpcCodec.encodeRequest(req);
+            byte[] truncated = new byte[payload.length / 2];
+            System.arraycopy(payload, 0, truncated, 0, truncated.length);
+            check("truncated request payload → null", HttpIpcCodec.decodeRequest(truncated) == null);
+        }
+
+        // Method > 255 bytes throws
+        {
+            StringBuffer sb = new StringBuffer();
+            for (int i = 0; i < 256; i++) sb.append('X');
+            try {
+                HttpIpcCodec.encodeRequest(new HttpRequest(sb.toString(), "http://x.com/"));
+                check("method > 255 throws", false);
+            } catch (IllegalArgumentException e) {
+                check("method > 255 throws", true);
+            }
+        }
+
+        // Round-trip response: 200 OK with headers and body
+        {
+            java.util.Vector headers = new java.util.Vector();
+            headers.addElement(new String[]{"Content-Type", "text/plain"});
+            HttpResponse resp = new HttpResponse(200, "OK", headers, "hi".getBytes());
+            byte[] payload = HttpIpcCodec.encodeResponse(resp);
+            check("encode response non-null", payload != null);
+            HttpResponse decoded = HttpIpcCodec.decodeResponse(payload);
+            check("decode response non-null", decoded != null);
+            if (decoded != null) {
+                check("response status round-trip", decoded.getStatusCode() == 200);
+                check("response reason round-trip", "OK".equals(decoded.getReason()));
+                check("response header count",      decoded.getHeaders().size() == 1);
+                check("response body round-trip",   decoded.getBody().length == 2);
+            }
+        }
+
+        // Transport error response (status 0)
+        {
+            HttpResponse err = new HttpResponse("network timeout");
+            byte[] payload = HttpIpcCodec.encodeResponse(err);
+            HttpResponse decoded = HttpIpcCodec.decodeResponse(payload);
+            check("transport error response round-trip", decoded != null
+                  && decoded.getStatusCode() == 0
+                  && decoded.getReason() != null
+                  && decoded.getReason().length() == 0);
+        }
+
+        // Wrong schema version → null
+        {
+            java.util.Vector h = new java.util.Vector();
+            HttpResponse resp = new HttpResponse(200, "OK", h, new byte[0]);
+            byte[] payload = HttpIpcCodec.encodeResponse(resp);
+            if (payload != null && payload.length > 0) {
+                payload[0] = 0x02;
+            }
+            check("wrong schema version → null", HttpIpcCodec.decodeResponse(payload) == null);
+        }
+
+        // null payload → null
+        check("null request payload → null", HttpIpcCodec.decodeRequest(null) == null);
+        check("null response payload → null", HttpIpcCodec.decodeResponse(null) == null);
+    }
+
+    // -------------------------------------------------------------------------
     // main
     // -------------------------------------------------------------------------
 
@@ -365,6 +465,7 @@ public class WhispernetNetworkTest {
         testHttpResponseValueType();
         testHttpClient();
         testSocketClient();
+        testHttpIpcCodec();
 
         System.out.println("\n" + passed + "/" + total + " tests passed");
         if (passed != total) {

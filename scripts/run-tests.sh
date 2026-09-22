@@ -8,15 +8,21 @@ echo "============================================="
 echo "--- 1. Python Unit & Packaging Tests ---"
 PYTHONPATH=python/src python3 -m unittest discover -s python/tests -v
 
-echo "--- 2. Native C++ Unit Tests ---"
+echo "--- 2. Java Kindlet, Bridge & Simulator Ant Tests ---"
+export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+ant -f java/kindlet-api/build.xml clean test jar
+ant -f java/kindlet-bridge/build.xml clean jar
+ant -f java/emulator/build.xml clean test jar
+
+echo "--- 3. Native C++ Unit Tests ---"
 cmake -S native -B native/build
 cmake --build native/build
 ctest --test-dir native/build --output-on-failure
 
-echo "--- 3. Docker Configuration Verification ---"
+echo "--- 4. Docker Configuration Verification ---"
 ./tests/docker/test_docker_builds.sh
 
-echo "--- 4. Security Verification ---"
+echo "--- 5. Security Verification ---"
 ./scripts/check-no-private-keys.sh
 
 echo "============================================="

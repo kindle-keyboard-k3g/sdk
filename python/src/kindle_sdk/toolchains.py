@@ -17,5 +17,8 @@ def check_toolchains() -> Dict[str, bool]:
     ]
     status = {}
     for t in tools:
-        status[t] = shutil.which(t) is not None
+        if t == "qemu-arm-static":
+            status[t] = (shutil.which("qemu-arm-static") is not None) or (shutil.which("qemu-arm") is not None)
+        else:
+            status[t] = shutil.which(t) is not None
     return status

@@ -79,11 +79,12 @@ class TestPackagingAndSigning(unittest.TestCase):
             self.assertTrue(signer.verify(jar_path))
 
             # Inspect zip entries to ensure .SF and .RSA/.DSA signatures are present
+            # Note: jarsigner truncates alias names longer than 8 chars (8.3 DOS standard)
             with zipfile.ZipFile(jar_path, "r") as zf:
                 names = zf.namelist()
-                has_dk_sf = any("DKDEVELOPER.SF" in n for n in names)
-                has_di_sf = any("DIDEVELOPER.SF" in n for n in names)
-                has_dn_sf = any("DNDEVELOPER.SF" in n for n in names)
+                has_dk_sf = any("DKDEVELO.SF" in n or "DKDEVELOPER.SF" in n for n in names)
+                has_di_sf = any("DIDEVELO.SF" in n or "DIDEVELOPER.SF" in n for n in names)
+                has_dn_sf = any("DNDEVELO.SF" in n or "DNDEVELOPER.SF" in n for n in names)
                 self.assertTrue(has_dk_sf)
                 self.assertTrue(has_di_sf)
                 self.assertTrue(has_dn_sf)

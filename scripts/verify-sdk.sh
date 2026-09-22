@@ -11,8 +11,9 @@ test -f "${TMP_DIR}/demo-app/kindle.toml"
 test -f "${TMP_DIR}/demo-app/src/com/example/SampleKindlet.java"
 
 echo "2. Building manifest and packaging active content into .azw2 container..."
-mkdir -p "${TMP_DIR}/classes/com/example"
-echo "cafebabe" > "${TMP_DIR}/classes/com/example/SampleKindlet.class"
+mkdir -p "${TMP_DIR}/classes"
+# Compile real Java class against kindlet-api.jar
+/usr/lib/jvm/java-8-openjdk-amd64/bin/javac -source 1.4 -target 1.4 -cp "java/kindlet-api/dist/kindlet-api.jar" -d "${TMP_DIR}/classes" "${TMP_DIR}/demo-app/src/com/example/SampleKindlet.java"
 
 AZW2_PATH="${TMP_DIR}/DemoApp.azw2"
 PYTHONPATH=python/src python3 -c "
@@ -54,13 +55,13 @@ aliases = ['dkDeveloper', 'diDeveloper', 'dnDeveloper']
 signer.sign(Path('${AZW2_PATH}'), Path('${KEYSTORE_PATH}'), '${PASSWORD}', aliases)
 assert signer.verify(Path('${AZW2_PATH}'))
 
-# Verify presence of signature files
+# Verify presence of signature files (jarsigner 8.3 convention or full alias)
 with zipfile.ZipFile(Path('${AZW2_PATH}'), 'r') as zf:
     names = zf.namelist()
     assert 'META-INF/MANIFEST.MF' in names
-    assert any('DKDEVELOPER.SF' in n for n in names)
-    assert any('DIDEVELOPER.SF' in n for n in names)
-    assert any('DNDEVELOPER.SF' in n for n in names)
+    assert any('DKDEVELO.SF' in n or 'DKDEVELOPER.SF' in n for n in names)
+    assert any('DIDEVELO.SF' in n or 'DIDEVELOPER.SF' in n for n in names)
+    assert any('DNDEVELO.SF' in n or 'DNDEVELOPER.SF' in n for n in names)
     print('Verified .azw2 package signatures: DK, DI, and DN blocks confirmed!')
 "
 
@@ -73,5 +74,8 @@ assert k3.display.height == 800
 assert 'gray4' in k3.display.formats
 print('K3 display profile validated!')
 "
+
+echo "6. Launching and executing official Kindlet in desktop simulator (headless mode)..."
+/usr/lib/jvm/java-8-openjdk-amd64/bin/java -cp "java/emulator/dist/kindle-emulator.jar:java/kindlet-api/dist/kindlet-api.jar" com.amazon.kindle.emulator.EmulatorLauncher "${AZW2_PATH}" --headless --width 600 --height 800
 
 echo "PASS: End-to-end SDK workflow with full signing verified successfully!"

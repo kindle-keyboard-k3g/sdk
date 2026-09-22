@@ -1,0 +1,18 @@
+services:
+  j2me-builder:
+    build:
+      context: ..
+      dockerfile: docker/j2me/Dockerfile
+    volumes:
+      - ..:/workspace
+    environment:
+      - TZ=America/Sao_Paulo
+
+  native-builder:
+    build:
+      context: ..
+      dockerfile: docker/native/Dockerfile
+    volumes:
+      - ..:/workspace
+    environment:
+      - TZ=America/Sao_Paulo

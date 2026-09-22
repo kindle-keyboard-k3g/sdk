@@ -1,9 +1,10 @@
 package com.amazon.kindle.bridge.network;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.ByteArrayInputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.Vector;
@@ -454,6 +455,104 @@ public class WhispernetNetworkTest {
     }
 
     // -------------------------------------------------------------------------
+    // NetworkRelayHandler tests
+    // -------------------------------------------------------------------------
+
+    static void testNetworkRelayHandler() throws Exception {
+        System.out.println("\n-- NetworkRelayHandler --");
+
+        // null httpClient rejected
+        try {
+            new NetworkRelayHandler(null, new ByteArrayOutputStream(), null);
+            check("null httpClient rejected", false);
+        } catch (IllegalArgumentException e) {
+            check("null httpClient rejected", true);
+        }
+
+        // null stdin rejected
+        try {
+            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", findFreePort());
+            new NetworkRelayHandler(new WhispernetHttpClient(proxy), null, null);
+            check("null stdin rejected", false);
+        } catch (IllegalArgumentException e) {
+            check("null stdin rejected", true);
+        }
+
+        // Non-HTTP_REQUEST type is silently ignored
+        {
+            ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", findFreePort());
+            NetworkRelayHandler handler = new NetworkRelayHandler(
+                new WhispernetHttpClient(proxy), stdout, null);
+            com.amazon.kindle.bridge.NativeMessage pingMsg = new com.amazon.kindle.bridge.NativeMessage(
+                com.amazon.kindle.bridge.NativeMessage.TYPE_PING, 0, new byte[0]);
+            handler.handleMessage(pingMsg);
+            check("non-HTTP_REQUEST type ignored (no output)", stdout.size() == 0);
+        }
+
+        // Malformed payload → transport-error response written to stdout
+        {
+            ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", findFreePort());
+            NetworkRelayHandler handler = new NetworkRelayHandler(
+                new WhispernetHttpClient(proxy), stdout, null);
+            com.amazon.kindle.bridge.NativeMessage badMsg = new com.amazon.kindle.bridge.NativeMessage(
+                com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_REQUEST, 42, new byte[]{0x00});
+            handler.handleMessage(badMsg);
+            check("malformed payload → response written", stdout.size() > 0);
+            // Parse the written frame and verify it is a transport error
+            com.amazon.kindle.bridge.NativeMessage reply =
+                com.amazon.kindle.bridge.NativeMessage.readFrom(
+                    new ByteArrayInputStream(stdout.toByteArray()));
+            check("malformed payload → HTTP_RESPONSE type",
+                  reply.getType() == com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_RESPONSE);
+            check("malformed payload → request ID echoed", reply.getRequestId() == 42);
+            HttpResponse decodedResp = HttpIpcCodec.decodeResponse(reply.getPayload());
+            check("malformed payload → transport error response",
+                  decodedResp != null && decodedResp.isTransportError());
+        }
+
+        // Successful relay via fake proxy: listener is called with response
+        {
+            String fakeReply = "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nhi";
+            FakeProxyServer server = new FakeProxyServer(fakeReply.getBytes("US-ASCII"));
+            server.start();
+
+            ByteArrayOutputStream stdout = new ByteArrayOutputStream();
+            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", server.getPort());
+            final HttpResponse[] listenerResult = new HttpResponse[1];
+            final int[] listenerRequestId = new int[]{-1};
+            NetworkRelayHandler handler = new NetworkRelayHandler(
+                new WhispernetHttpClient(proxy), stdout,
+                new HttpResponseListener() {
+                    public void onHttpResponse(int requestId, HttpResponse response) {
+                        listenerRequestId[0] = requestId;
+                        listenerResult[0] = response;
+                    }
+                });
+
+            HttpRequest req = new HttpRequest("GET", "http://example.com/");
+            byte[] encodedReq = HttpIpcCodec.encodeRequest(req);
+            com.amazon.kindle.bridge.NativeMessage reqMsg = new com.amazon.kindle.bridge.NativeMessage(
+                com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_REQUEST, 99, encodedReq);
+            handler.handleMessage(reqMsg);
+            server.stop();
+
+            check("relay listener called", listenerResult[0] != null);
+            check("relay listener request ID", listenerRequestId[0] == 99);
+            check("relay response status 200",
+                  listenerResult[0] != null && listenerResult[0].getStatusCode() == 200);
+            // Verify frame written to stdout
+            com.amazon.kindle.bridge.NativeMessage reply =
+                com.amazon.kindle.bridge.NativeMessage.readFrom(
+                    new ByteArrayInputStream(stdout.toByteArray()));
+            check("relay frame type HTTP_RESPONSE",
+                  reply.getType() == com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_RESPONSE);
+            check("relay frame request ID echoed", reply.getRequestId() == 99);
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // main
     // -------------------------------------------------------------------------
 
@@ -466,6 +565,7 @@ public class WhispernetNetworkTest {
         testHttpClient();
         testSocketClient();
         testHttpIpcCodec();
+        testNetworkRelayHandler();
 
         System.out.println("\n" + passed + "/" + total + " tests passed");
         if (passed != total) {

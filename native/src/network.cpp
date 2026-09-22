@@ -475,8 +475,14 @@ HttpResponse do_execute(const HttpRequest& request,
     if (!has_cl && !request.body.empty())
         req_stream << "Content-Length: " << request.body.size() << "\r\n";
 
-    for (const auto& h : request.headers)
+    for (const auto& h : request.headers) {
+        if (h.first.find('\r')  != std::string::npos ||
+            h.first.find('\n')  != std::string::npos ||
+            h.second.find('\r') != std::string::npos ||
+            h.second.find('\n') != std::string::npos)
+            return build_error("invalid header: contains CRLF");
         req_stream << h.first << ": " << h.second << "\r\n";
+    }
     req_stream << "\r\n";
 
     const std::string req_str = req_stream.str();

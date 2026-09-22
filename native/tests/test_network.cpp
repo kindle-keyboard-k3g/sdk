@@ -1,4 +1,5 @@
 #include "kindle/network.hpp"
+#include "kindle/network_ipc.hpp"
 #include "../platform/fake/fake_network.hpp"
 #include <cassert>
 #include <cstdlib>
@@ -473,6 +474,138 @@ static void test_crlf_injection_guard() {
 }
 
 // ============================================================================
+// Category H: IPC Codec
+// ============================================================================
+static void test_ipc_codec() {
+    using namespace kindle::network;
+    using namespace kindle::network::ipc;
+
+    // H1: encode_request + decode_request round-trip (GET, headers, empty body)
+    {
+        HttpRequest orig;
+        orig.method  = "GET";
+        orig.url     = "http://example.com/path?q=1";
+        orig.headers = {{"Host", "example.com"}, {"Accept", "text/html"}};
+        auto payload = encode_request(orig);
+        TEST("H1 encode_request returns non-empty", !payload.empty());
+        HttpRequest decoded;
+        bool ok = decode_request(payload, decoded);
+        TEST("H1 decode_request succeeds", ok);
+        TEST("H1 method round-trips",  decoded.method == orig.method);
+        TEST("H1 url round-trips",     decoded.url    == orig.url);
+        TEST("H1 header count",        decoded.headers.size() == orig.headers.size());
+        TEST("H1 header[0] round-trips", decoded.headers[0].first  == "Host" &&
+                                         decoded.headers[0].second == "example.com");
+        TEST("H1 body empty",          decoded.body.empty());
+    }
+
+    // H2: encode_request + decode_request round-trip (POST with binary body)
+    {
+        HttpRequest orig;
+        orig.method  = "POST";
+        orig.url     = "http://example.com/api";
+        orig.headers = {{"Content-Type", "application/octet-stream"}};
+        orig.body    = {0x00, 0x01, 0xFF, 0x00, 0x42};
+        auto payload = encode_request(orig);
+        TEST("H2 encode POST returns non-empty", !payload.empty());
+        HttpRequest decoded;
+        bool ok = decode_request(payload, decoded);
+        TEST("H2 decode POST succeeds", ok);
+        TEST("H2 binary body round-trips", decoded.body == orig.body);
+    }
+
+    // H3: decode_request with truncated payload → returns false
+    {
+        HttpRequest orig;
+        orig.method = "GET";
+        orig.url    = "http://example.com/";
+        auto payload = encode_request(orig);
+        payload.resize(payload.size() / 2);
+        HttpRequest decoded;
+        TEST("H3 truncated payload rejected", !decode_request(payload, decoded));
+    }
+
+    // H4: decode_request with body_length exceeding payload → returns false
+    {
+        HttpRequest orig;
+        orig.method = "GET";
+        orig.url    = "http://example.com/";
+        auto payload = encode_request(orig);
+        // Overwrite body_length field (bytes 6-9) with a huge value
+        if (payload.size() >= 10) {
+            payload[6] = 0x01;
+            payload[7] = 0x00;
+            payload[8] = 0x00;
+            payload[9] = 0x00;
+        }
+        HttpRequest decoded;
+        TEST("H4 body_length overflow rejected", !decode_request(payload, decoded));
+    }
+
+    // H5: encode_request with method > 255 chars → returns empty vector
+    {
+        HttpRequest req;
+        req.method = std::string(256, 'X');
+        req.url    = "http://example.com/";
+        auto payload = encode_request(req);
+        TEST("H5 method > 255 bytes yields empty", payload.empty());
+    }
+
+    // H6: encode_response + decode_response round-trip (200 OK with headers and body)
+    {
+        HttpResponse orig;
+        orig.status_code = 200;
+        orig.reason      = "OK";
+        orig.headers     = {{"Content-Type", "text/plain"}, {"X-Foo", "bar"}};
+        orig.body        = {'H', 'e', 'l', 'l', 'o'};
+        auto payload = encode_response(orig);
+        TEST("H6 encode_response returns non-empty", !payload.empty());
+        HttpResponse decoded;
+        bool ok = decode_response(payload, decoded);
+        TEST("H6 decode_response succeeds", ok);
+        TEST("H6 status_code round-trips", decoded.status_code == 200);
+        TEST("H6 reason round-trips",      decoded.reason      == "OK");
+        TEST("H6 header count",            decoded.headers.size() == 2);
+        TEST("H6 body round-trips",        decoded.body == orig.body);
+    }
+
+    // H7: decode_response with status_code=0 (transport error) decodes correctly
+    {
+        HttpResponse orig;
+        orig.status_code = 0;
+        orig.reason      = "transport error";
+        orig.body        = {};
+        auto payload = encode_response(orig);
+        HttpResponse decoded;
+        bool ok = decode_response(payload, decoded);
+        TEST("H7 status 0 decodes", ok);
+        TEST("H7 status 0 code",    decoded.status_code == 0);
+        TEST("H7 status 0 reason",  decoded.reason      == "transport error");
+    }
+
+    // H8: decode_response with schema_version != 1 → returns false
+    {
+        HttpResponse orig;
+        orig.status_code = 200;
+        orig.reason      = "OK";
+        auto payload = encode_response(orig);
+        if (!payload.empty()) payload[0] = 0x02; // corrupt schema_version
+        HttpResponse decoded;
+        TEST("H8 wrong schema_version rejected", !decode_response(payload, decoded));
+    }
+
+    // H9: encode_request total size > 1 MiB → returns empty vector
+    {
+        HttpRequest req;
+        req.method = "GET";
+        req.url    = "http://example.com/";
+        req.body.resize(1024 * 1024 + 1, 'X');
+        auto payload = encode_request(req);
+        TEST("H9 payload > 1 MiB yields empty", payload.empty());
+    }
+}
+
+// ============================================================================
 // main
 // ============================================================================
 int main() {
@@ -485,7 +618,9 @@ int main() {
     test_connect_tunnel();
     test_https_guard();
     test_crlf_injection_guard();
+    test_ipc_codec();
 
     std::cout << "\n" << g_passed << "/" << g_total << " tests passed\n";
     return (g_passed == g_total) ? 0 : 1;
 }
+

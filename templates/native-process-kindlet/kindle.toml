@@ -1,0 +1,6 @@
+[project]
+name = "native-process-kindlet"
+version = "1.0.0"
+type = "native-process-kindlet"
+target = "k3"
+main_class = "com.example.NativeSupervisedKindlet"

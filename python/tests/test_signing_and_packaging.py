@@ -3,7 +3,6 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -55,31 +54,39 @@ class TestPackagingAndSigning(unittest.TestCase):
                 self.assertIn("META-INF/MANIFEST.MF", names)
                 self.assertIn("App.class", names)
 
-    @patch("subprocess.run")
-    def test_keystore_generator_invokes_keytool(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0)
-        gen = KeystoreGenerator(keytool_bin="keytool")
+    def test_real_keystore_generation_and_signing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            out_ks = Path(tmpdir) / "test.keystore"
-            gen.generate(out_ks, "password123")
-            # Should have invoked keytool 3 times for dk, di, dn
-            self.assertEqual(mock_run.call_count, 3)
+            tmppath = Path(tmpdir)
+            keystore_path = tmppath / "test.keystore"
+            jar_path = tmppath / "test.jar"
 
-    @patch("subprocess.run")
-    def test_jarsigner_invokes_sign_and_verify(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="jar verified.")
-        signer = JarSigner(jarsigner_bin="jarsigner")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            jar = Path(tmpdir) / "test.jar"
-            jar.write_bytes(b"dummy")
-            ks = Path(tmpdir) / "test.keystore"
-            ks.write_bytes(b"dummy")
+            # Create sample jar
+            with zipfile.ZipFile(jar_path, "w") as zf:
+                zf.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n\r\n")
+                zf.writestr("com/example/Test.class", b"\xca\xfe\xba\xbe")
 
-            signer.sign(jar, ks, "password123", ["dkDeveloper", "diDeveloper", "dnDeveloper"])
-            self.assertEqual(mock_run.call_count, 3)
+            # 1. Real keystore generation (via OpenSSL or keytool)
+            gen = KeystoreGenerator()
+            gen.generate(keystore_path, "password123")
+            self.assertTrue(keystore_path.exists())
+            self.assertGreater(keystore_path.stat().st_size, 0)
 
-            verified = signer.verify(jar)
-            self.assertTrue(verified)
+            # 2. Real triple signing with dk, di, dn aliases
+            signer = JarSigner()
+            signer.sign(jar_path, keystore_path, "password123", ["dkDeveloper", "diDeveloper", "dnDeveloper"])
+
+            # 3. Verify signed jar
+            self.assertTrue(signer.verify(jar_path))
+
+            # Inspect zip entries to ensure .SF and .RSA/.DSA signatures are present
+            with zipfile.ZipFile(jar_path, "r") as zf:
+                names = zf.namelist()
+                has_dk_sf = any("DKDEVELOPER.SF" in n for n in names)
+                has_di_sf = any("DIDEVELOPER.SF" in n for n in names)
+                has_dn_sf = any("DNDEVELOPER.SF" in n for n in names)
+                self.assertTrue(has_dk_sf)
+                self.assertTrue(has_di_sf)
+                self.assertTrue(has_dn_sf)
 
 if __name__ == "__main__":
     unittest.main()

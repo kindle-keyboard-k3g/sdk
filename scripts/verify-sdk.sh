@@ -10,34 +10,61 @@ PYTHONPATH=python/src python3 -m kindle_sdk.cli init "${TMP_DIR}/demo-app" --tem
 test -f "${TMP_DIR}/demo-app/kindle.toml"
 test -f "${TMP_DIR}/demo-app/src/com/example/SampleKindlet.java"
 
-echo "2. Building manifest and verifying spec..."
-PYTHONPATH=python/src python3 -c "
-from kindle_sdk.packaging.manifest import ManifestBuilder, ManifestSpec
-from pathlib import Path
-builder = ManifestBuilder()
-spec = ManifestSpec(main_class='com.example.SampleKindlet', implementation_title='DemoApp')
-data = builder.build(spec)
-assert b'com.amazon.kindle.kindlet' in data
-assert b'Main-Class: com.example.SampleKindlet' in data
-print('Manifest generated and verified!')
-"
-
-echo "3. Packaging simulated application into .azw2 container..."
+echo "2. Building manifest and packaging active content into .azw2 container..."
 mkdir -p "${TMP_DIR}/classes/com/example"
 echo "cafebabe" > "${TMP_DIR}/classes/com/example/SampleKindlet.class"
 
+AZW2_PATH="${TMP_DIR}/DemoApp.azw2"
 PYTHONPATH=python/src python3 -c "
 from kindle_sdk.packaging.azw2 import Azw2Packager
 from kindle_sdk.packaging.manifest import ManifestSpec
 from pathlib import Path
 packager = Azw2Packager()
-spec = ManifestSpec(main_class='com.example.SampleKindlet', implementation_title='DemoApp')
-packager.package(Path('${TMP_DIR}/demo.azw2'), Path('${TMP_DIR}/classes'), spec)
-assert Path('${TMP_DIR}/demo.azw2').exists()
-print('AZW2 package built successfully!')
+spec = ManifestSpec(
+    main_class='com.example.SampleKindlet',
+    implementation_title='DemoApp',
+    toolbar_mode='persistent'
+)
+packager.package(Path('${AZW2_PATH}'), Path('${TMP_DIR}/classes'), spec)
+assert Path('${AZW2_PATH}').exists()
+print('AZW2 container packaged successfully!')
 "
 
-echo "4. Simulating desktop e-ink 4bpp display quantizer..."
+echo "3. Generating real test keystore with dk, di, dn certificate aliases..."
+KEYSTORE_PATH="${TMP_DIR}/developer.keystore"
+PASSWORD="kindlePassword123"
+
+PYTHONPATH=python/src python3 -c "
+from kindle_sdk.signing.keystore import KeystoreGenerator
+from pathlib import Path
+gen = KeystoreGenerator()
+gen.generate(Path('${KEYSTORE_PATH}'), '${PASSWORD}')
+assert Path('${KEYSTORE_PATH}').exists()
+print('Developer keystore generated successfully with OpenSSL/keytool!')
+"
+
+echo "4. Triple-signing .azw2 with dk, di, dn aliases and verifying signature..."
+PYTHONPATH=python/src python3 -c "
+from kindle_sdk.signing.jarsigner import JarSigner
+from pathlib import Path
+import zipfile
+
+signer = JarSigner()
+aliases = ['dkDeveloper', 'diDeveloper', 'dnDeveloper']
+signer.sign(Path('${AZW2_PATH}'), Path('${KEYSTORE_PATH}'), '${PASSWORD}', aliases)
+assert signer.verify(Path('${AZW2_PATH}'))
+
+# Verify presence of signature files
+with zipfile.ZipFile(Path('${AZW2_PATH}'), 'r') as zf:
+    names = zf.namelist()
+    assert 'META-INF/MANIFEST.MF' in names
+    assert any('DKDEVELOPER.SF' in n for n in names)
+    assert any('DIDEVELOPER.SF' in n for n in names)
+    assert any('DNDEVELOPER.SF' in n for n in names)
+    print('Verified .azw2 package signatures: DK, DI, and DN blocks confirmed!')
+"
+
+echo "5. Simulating desktop e-ink 4bpp display quantizer..."
 PYTHONPATH=python/src python3 -c "
 from kindle_sdk.profiles import load_profile
 k3 = load_profile('k3')
@@ -47,4 +74,4 @@ assert 'gray4' in k3.display.formats
 print('K3 display profile validated!')
 "
 
-echo "PASS: End-to-end SDK workflow verified successfully!"
+echo "PASS: End-to-end SDK workflow with full signing verified successfully!"

@@ -13,6 +13,7 @@ add_library(kindle_native STATIC
     platform/fake/fake_eink.cpp
     platform/linux/procfs.cpp
     platform/linux/framebuffer_linux.cpp
+    platform/linux/evdev_linux.cpp
 )
 
 enable_testing()
@@ -28,3 +29,7 @@ add_test(NAME test_eink COMMAND test_eink)
 add_executable(test_ipc tests/test_ipc.cpp)
 target_link_libraries(test_ipc kindle_native)
 add_test(NAME test_ipc COMMAND test_ipc)
+
+add_executable(test_input tests/test_input.cpp)
+target_link_libraries(test_input kindle_native)
+add_test(NAME test_input COMMAND test_input)

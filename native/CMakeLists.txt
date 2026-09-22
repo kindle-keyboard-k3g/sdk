@@ -33,3 +33,6 @@ add_test(NAME test_ipc COMMAND test_ipc)
 add_executable(test_input tests/test_input.cpp)
 target_link_libraries(test_input kindle_native)
 add_test(NAME test_input COMMAND test_input)
+
+add_executable(kindle_daemon src/kindle_daemon_main.cpp)
+target_link_libraries(kindle_daemon kindle_native)

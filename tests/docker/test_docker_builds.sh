@@ -19,3 +19,14 @@ test -x docker/native/entrypoint.sh
 test -x docker/native/verify-toolchain.sh
 
 echo "All Docker configuration files are verified!"
+
+echo "=== Building and Running Hermetic Docker Containers ==="
+echo "1. Building and verifying kindle-j2me-builder container..."
+docker build -f docker/j2me/Dockerfile -t kindle-j2me-builder .
+docker run --rm kindle-j2me-builder /verify-toolchain.sh
+
+echo "2. Building and verifying kindle-cpp-builder container..."
+docker build -f docker/native/Dockerfile -t kindle-cpp-builder .
+docker run --rm kindle-cpp-builder /verify-toolchain.sh
+
+echo "=== All Docker Containers Successfully Built and Verified! ==="

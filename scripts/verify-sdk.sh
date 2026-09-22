@@ -78,4 +78,9 @@ print('K3 display profile validated!')
 echo "6. Launching and executing official Kindlet in desktop simulator (headless mode)..."
 /usr/lib/jvm/java-8-openjdk-amd64/bin/java -cp "java/emulator/dist/kindle-emulator.jar:java/kindlet-api/dist/kindlet-api.jar" com.amazon.kindle.emulator.EmulatorLauncher "${AZW2_PATH}" --headless --width 600 --height 800
 
+echo "7. Cross-compiling modern C++ ARMv6 daemon and validating Native-in-Kindlet IPC Bridge..."
+cmake -S native -B native/build-arm -DCMAKE_TOOLCHAIN_FILE="$(pwd)/native/cmake/KindleArmv6.cmake"
+cmake --build native/build-arm --target kindle_daemon
+/usr/lib/jvm/java-8-openjdk-amd64/bin/java -cp "java/kindlet-bridge/build/classes:java/kindlet-bridge/build/test-classes" com.amazon.kindle.bridge.EndToEndArmBridgeTest "$(pwd)/native/build-arm/kindle_daemon"
+
 echo "PASS: End-to-end SDK workflow with full signing verified successfully!"

@@ -14,18 +14,21 @@ public class EmulatorLauncher {
 
     public static void main(String[] args) {
         if (args.length < 1) {
-            System.err.println("Usage: java -cp ... com.amazon.kindle.emulator.EmulatorLauncher <path-to-azw2-or-jar> [--headless] [--width W] [--height H]");
+            System.err.println("Usage: java -cp ... com.amazon.kindle.emulator.EmulatorLauncher <path-to-azw2-or-jar> [--headless] [--fake-proxy] [--width W] [--height H]");
             System.exit(1);
         }
 
         String archivePath = args[0];
-        boolean headless = false;
-        int width = 600;
+        boolean headless   = false;
+        boolean fakeProxy  = false;
+        int width  = 600;
         int height = 800;
 
         for (int i = 1; i < args.length; i++) {
             if ("--headless".equals(args[i])) {
                 headless = true;
+            } else if ("--fake-proxy".equals(args[i])) {
+                fakeProxy = true;
             } else if ("--width".equals(args[i]) && i + 1 < args.length) {
                 width = Integer.parseInt(args[++i]);
             } else if ("--height".equals(args[i]) && i + 1 < args.length) {
@@ -33,7 +36,13 @@ public class EmulatorLauncher {
             }
         }
 
+        FakeWhispernetProxy proxy = null;
         try {
+            if (fakeProxy) {
+                proxy = new FakeWhispernetProxy();
+                proxy.start();
+            }
+
             File file = new File(archivePath);
             if (!file.exists()) {
                 System.err.println("Error: File not found: " + archivePath);
@@ -86,6 +95,10 @@ public class EmulatorLauncher {
         } catch (Throwable t) {
             t.printStackTrace();
             System.exit(10);
+        } finally {
+            if (proxy != null) {
+                proxy.stop();
+            }
         }
     }
 }

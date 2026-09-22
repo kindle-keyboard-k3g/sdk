@@ -1,7 +1,7 @@
 package com.amazon.kindle.bridge;
 
 /**
- * Optional JNI bridge wrapper for direct in-process native execution.
+ * Optional in-process JNI bridge wrapper for direct CVM native calls.
  */
 public class NativeJniBridge {
 
@@ -16,10 +16,22 @@ public class NativeJniBridge {
         }
     }
 
+    /**
+     * Checks if the native library was successfully loaded into CVM.
+     *
+     * @return true if JNI binding is functional, false otherwise
+     */
     public static boolean isAvailable() {
         return loaded;
     }
 
+    /**
+     * Executes an in-process transaction across JNI boundary.
+     *
+     * @param commandId command identifier
+     * @param input serialized input buffer
+     * @return serialized output buffer
+     */
     public static byte[] transact(int commandId, byte[] input) {
         if (!loaded) {
             throw new UnsupportedOperationException("JNI bridge library not available");

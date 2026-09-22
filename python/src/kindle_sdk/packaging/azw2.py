@@ -1,3 +1,10 @@
+"""
+Active Content (.azw2) container packaging.
+
+Packages compiled Java bytecode, manifests, embedded native binaries,
+and application resources into unsigned Kindlet archive containers.
+"""
+
 import zipfile
 import shutil
 from pathlib import Path
@@ -5,8 +12,12 @@ from typing import List, Dict, Optional
 from .manifest import ManifestBuilder, ManifestSpec
 
 class Azw2Packager:
+    """
+    Assembles Active Content containers (.azw2) conforming to the Kindle format.
+    """
 
     def __init__(self):
+        """Initializes the packager with an internal ManifestBuilder."""
         self.manifest_builder = ManifestBuilder()
 
     def package(
@@ -19,7 +30,20 @@ class Azw2Packager:
     ) -> Path:
         """
         Packs Java class files, manifest, and optional native ARM binaries into an unsigned JAR,
-        ready for signing and deployment as .azw2.
+        ready for signing and deployment as an .azw2 container.
+
+        Args:
+            output_azw2: Destination path for the output .azw2 container file.
+            classes_dir: Directory containing compiled .class files.
+            manifest_spec: ManifestSpec containing metadata headers.
+            native_binaries: Optional dictionary mapping in-archive paths to native binary files on disk.
+            resources: Optional dictionary mapping in-archive paths to resource files on disk.
+
+        Returns:
+            Path to the newly created .azw2 archive.
+
+        Raises:
+            FileNotFoundError: If classes_dir does not exist.
         """
         output_azw2 = Path(output_azw2)
         classes_dir = Path(classes_dir)

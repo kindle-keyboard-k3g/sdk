@@ -1,14 +1,31 @@
+"""
+Developer keystore generation.
+
+Generates local development keystores containing Kindlet certificate aliases
+(dk, di, dn) using JDK keytool or OpenSSL fallback.
+"""
+
 import subprocess
 import shutil
 from pathlib import Path
 from typing import Dict, Optional
 
 class KeystoreError(Exception):
+    """Raised when keystore generation fails."""
     pass
 
 class KeystoreGenerator:
+    """
+    Automates generation of developer keystores containing Kindle developer key aliases.
+    """
 
     def __init__(self, keytool_bin: Optional[str] = None):
+        """
+        Initializes the generator with an optional path to the keytool binary.
+
+        Args:
+            keytool_bin: Optional explicit path to keytool executable.
+        """
         self.keytool_bin = keytool_bin or shutil.which("keytool")
 
     def generate(
@@ -23,6 +40,17 @@ class KeystoreGenerator:
         """
         Generates a keystore containing Kindle developer aliases (dk, di, dn).
         Uses keytool if available, otherwise generates RSA keypairs and PKCS12 keystore via OpenSSL.
+
+        Args:
+            output_path: Path where generated keystore will be saved.
+            password: Password for both keystore and private key protection (minimum 6 characters).
+            aliases: Optional dictionary mapping alias names to X.500 distinguished names.
+            key_algorithm: Asymmetric key algorithm (default: 'RSA').
+            key_size: Key length in bits (default: 2048).
+            sig_algorithm: Signature algorithm (default: 'SHA256withRSA').
+
+        Raises:
+            KeystoreError: If password is too short or keytool/openssl execution fails.
         """
         if not password or len(password) < 6:
             raise KeystoreError("Password must be at least 6 characters")

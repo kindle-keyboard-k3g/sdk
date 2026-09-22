@@ -6,6 +6,9 @@ import java.awt.Graphics;
 import java.awt.Panel;
 import java.awt.image.BufferedImage;
 
+/**
+ * Display canvas simulating Kindle E-Ink screen rendering and refresh flashes.
+ */
 public class EinkScreenPanel extends Panel {
 
     private final int screenWidth;
@@ -13,6 +16,12 @@ public class EinkScreenPanel extends Panel {
     private BufferedImage buffer;
     private boolean flashing = false;
 
+    /**
+     * Constructs a panel matching the specified Kindle display dimensions.
+     *
+     * @param width screen width in pixels (e.g. 600 for K3, 824 for DX)
+     * @param height screen height in pixels (e.g. 800 for K3, 1200 for DX)
+     */
     public EinkScreenPanel(int width, int height) {
         this.screenWidth = width;
         this.screenHeight = height;
@@ -23,10 +32,20 @@ public class EinkScreenPanel extends Panel {
         g.dispose();
     }
 
+    /**
+     * Returns preferred dimensions matching screen resolution.
+     *
+     * @return Dimension instance
+     */
     public Dimension getPreferredSize() {
         return new Dimension(screenWidth, screenHeight);
     }
 
+    /**
+     * Simulates an E-Ink waveform refresh, optionally triggering a full black/white inversion flash.
+     *
+     * @param fullFlash true to simulate full inversion flash, false for partial update
+     */
     public void triggerRefresh(boolean fullFlash) {
         if (fullFlash) {
             this.flashing = true;
@@ -37,6 +56,11 @@ public class EinkScreenPanel extends Panel {
         repaint();
     }
 
+    /**
+     * Paints either the simulated flash state or the quantized screen buffer.
+     *
+     * @param g target graphics context
+     */
     public void paint(Graphics g) {
         if (flashing) {
             g.setColor(Color.BLACK);
@@ -46,6 +70,11 @@ public class EinkScreenPanel extends Panel {
         }
     }
 
+    /**
+     * Returns the underlying image buffer.
+     *
+     * @return BufferedImage representation of the display
+     */
     public BufferedImage getBuffer() {
         return buffer;
     }

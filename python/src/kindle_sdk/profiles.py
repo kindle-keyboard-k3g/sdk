@@ -1,3 +1,10 @@
+"""
+Target hardware and platform profile management.
+
+Defines target device profiles for supported legacy Kindle hardware including
+Kindle Keyboard (K3 / K3G) and Kindle DX / DX Graphite.
+"""
+
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +16,16 @@ class ProfileValidationError(Exception):
 
 @dataclass(frozen=True)
 class DisplayProfile:
+    """
+    E-Ink display specifications for a Kindle target device.
+
+    Attributes:
+        width: Display width in pixels.
+        height: Display height in pixels.
+        formats: Supported pixel formats (e.g. 'gray4', 'gray8', 'gray16').
+        ppi: Pixels per inch density.
+        eink_panel: Panel generation (e.g. 'Pearl', 'Vizplex').
+    """
     width: int
     height: int
     formats: List[str]
@@ -17,6 +34,21 @@ class DisplayProfile:
 
 @dataclass(frozen=True)
 class TargetProfile:
+    """
+    Hardware and platform profile for a supported Kindle device.
+
+    Attributes:
+        name: Short identifier code for the profile (e.g. 'k3', 'dx').
+        model_name: Full human-readable model name.
+        soc: System-on-Chip identifier (e.g. 'imx353', 'imx31').
+        cpu: CPU architecture family (e.g. 'armv6').
+        native_abi: Native compilation ABI target string.
+        ram_bytes: Total system memory in bytes.
+        linux_kernel: Host Linux kernel version.
+        glibc_version: Host C runtime library version.
+        display: DisplayProfile configuration instance.
+        ioctls: Dictionary of hardware ioctl hex codes and sysfs paths.
+    """
     name: str
     model_name: str
     soc: str
@@ -29,7 +61,12 @@ class TargetProfile:
     ioctls: Dict[str, str]
 
 def _get_profiles_dir() -> Path:
-    # Look for profiles/ relative to project root
+    """
+    Resolves the directory holding profile JSON definitions.
+
+    Returns:
+        Path to the profiles/ folder.
+    """
     base = Path(__file__).resolve().parent.parent.parent.parent
     profiles_dir = base / "profiles"
     if not profiles_dir.exists():
@@ -37,6 +74,15 @@ def _get_profiles_dir() -> Path:
     return profiles_dir
 
 def validate_profile(data: Dict[str, Any]) -> None:
+    """
+    Validates a loaded profile dictionary against required fields and constraints.
+
+    Args:
+        data: Raw dictionary loaded from profile JSON.
+
+    Raises:
+        ProfileValidationError: If any required field is missing or invalid.
+    """
     required = ["name", "soc", "cpu", "native_abi", "ram_bytes", "display", "ioctls"]
     for field in required:
         if field not in data:
@@ -64,6 +110,19 @@ def validate_profile(data: Dict[str, Any]) -> None:
         raise ProfileValidationError(f"Invalid display formats: {formats}")
 
 def load_profile(name: str) -> TargetProfile:
+    """
+    Loads and validates a target Kindle profile by name.
+
+    Args:
+        name: Name of target profile ('k3' or 'dx').
+
+    Returns:
+        TargetProfile instance with fully parsed hardware attributes.
+
+    Raises:
+        FileNotFoundError: If profile file does not exist.
+        ProfileValidationError: If profile fails validation rules.
+    """
     profiles_dir = _get_profiles_dir()
     profile_path = profiles_dir / f"{name}.json"
     if not profile_path.exists():

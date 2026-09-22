@@ -8,6 +8,7 @@ import java.io.OutputStream;
 
 /**
  * Supervises extraction, lifecycle, and IPC streaming with native C++ child processes.
+ * Complies with Java CDC 1.1 / Personal Basis Profile 1.1 constraints.
  */
 public class NativeProcessSupervisor {
 
@@ -18,11 +19,25 @@ public class NativeProcessSupervisor {
     private Thread readerThread;
     private volatile boolean running = false;
 
+    /**
+     * Constructs a supervisor using the provided launcher and working directory.
+     *
+     * @param launcher ProcessLauncher strategy
+     * @param workingDir working directory where binaries are extracted and executed
+     */
     public NativeProcessSupervisor(ProcessLauncher launcher, File workingDir) {
         this.launcher = launcher;
         this.workingDir = workingDir;
     }
 
+    /**
+     * Extracts an embedded native binary from JAR resource to disk and sets execution permissions.
+     *
+     * @param resourcePath classpath to the binary resource (e.g. "/bin/armv6/kindle_daemon")
+     * @param targetFileName name of destination file on disk
+     * @return File object referencing extracted binary
+     * @throws IOException if extraction fails
+     */
     public File extractResource(String resourcePath, String targetFileName) throws IOException {
         InputStream in = getClass().getResourceAsStream(resourcePath);
         if (in == null) {
@@ -51,6 +66,13 @@ public class NativeProcessSupervisor {
         return targetFile;
     }
 
+    /**
+     * Launches the native binary and starts background message reading thread.
+     *
+     * @param executableFile target executable
+     * @param listener event listener for incoming messages and termination
+     * @throws IOException if launch fails
+     */
     public void start(File executableFile, NativeBridgeListener listener) throws IOException {
         this.listener = listener;
         String[] cmd = new String[]{executableFile.getAbsolutePath()};
@@ -84,6 +106,12 @@ public class NativeProcessSupervisor {
         this.readerThread.start();
     }
 
+    /**
+     * Sends a framed IPC message to the child process stdin.
+     *
+     * @param message frame to serialize and send
+     * @throws IOException if the process is not running or stream fails
+     */
     public void sendMessage(NativeMessage message) throws IOException {
         if (process != null && running) {
             message.writeTo(process.getOutputStream());
@@ -92,11 +120,13 @@ public class NativeProcessSupervisor {
         }
     }
 
+    /**
+     * Gracefully stops the child process by transmitting a shutdown frame, then destroying the process.
+     */
     public void stop() {
         this.running = false;
         if (process != null) {
             try {
-                // Send shutdown frame
                 NativeMessage shutdownMsg = new NativeMessage(NativeMessage.TYPE_SHUTDOWN, 0, new byte[0]);
                 sendMessage(shutdownMsg);
             } catch (Exception ignored) {

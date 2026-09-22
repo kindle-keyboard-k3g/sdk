@@ -7,18 +7,27 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 /**
- * Message frame for the Kindle Native IPC protocol.
+ * Binary framed message structure for the Kindle Native IPC protocol.
+ * Conforms to the wire format: Magic (4B), Version (1B), Type (1B), Flags (2B), Request ID (4B), Length (4B), Payload.
  */
 public class NativeMessage {
 
+    /** Wire format magic header ('KIND'). */
     public static final int MAGIC = 0x4B494E44; // 'KIND'
+    /** Protocol format version. */
     public static final byte VERSION = 0x01;
 
+    /** Ping health check message type. */
     public static final byte TYPE_PING = 0x01;
+    /** Pong response message type. */
     public static final byte TYPE_PONG = 0x02;
+    /** Command execution request type. */
     public static final byte TYPE_COMMAND = 0x10;
+    /** Command response result type. */
     public static final byte TYPE_RESPONSE = 0x11;
+    /** Asynchronous event notification type. */
     public static final byte TYPE_NOTIFICATION = 0x20;
+    /** Process shutdown request type. */
     public static final byte TYPE_SHUTDOWN = (byte) 0xFF;
 
     private byte type;
@@ -26,6 +35,13 @@ public class NativeMessage {
     private int requestId;
     private byte[] payload;
 
+    /**
+     * Constructs a new message frame.
+     *
+     * @param type message type code
+     * @param requestId correlation request identifier
+     * @param payload payload byte array
+     */
     public NativeMessage(byte type, int requestId, byte[] payload) {
         this.type = type;
         this.flags = 0;
@@ -33,15 +49,49 @@ public class NativeMessage {
         this.payload = (payload != null) ? payload : new byte[0];
     }
 
+    /**
+     * Returns message type code.
+     *
+     * @return type byte
+     */
     public byte getType() { return type; }
+
+    /**
+     * Returns protocol bitmask flags.
+     *
+     * @return flags short
+     */
     public short getFlags() { return flags; }
+
+    /**
+     * Returns correlation request ID.
+     *
+     * @return request ID integer
+     */
     public int getRequestId() { return requestId; }
+
+    /**
+     * Returns raw payload byte array.
+     *
+     * @return byte array
+     */
     public byte[] getPayload() { return payload; }
 
+    /**
+     * Decodes payload bytes into a UTF-8 string.
+     *
+     * @return decoded string
+     */
     public String getPayloadAsString() {
         return new String(payload);
     }
 
+    /**
+     * Serializes this frame and writes it to the output stream.
+     *
+     * @param out target stream
+     * @throws IOException on write error
+     */
     public void writeTo(OutputStream out) throws IOException {
         DataOutputStream dos = new DataOutputStream(out);
         dos.writeInt(MAGIC);
@@ -56,6 +106,13 @@ public class NativeMessage {
         dos.flush();
     }
 
+    /**
+     * Deserializes a message frame from the input stream.
+     *
+     * @param in target stream
+     * @return decoded NativeMessage instance
+     * @throws IOException on invalid magic, version, or EOF
+     */
     public static NativeMessage readFrom(InputStream in) throws IOException {
         DataInputStream dis = new DataInputStream(in);
         int magic = dis.readInt();

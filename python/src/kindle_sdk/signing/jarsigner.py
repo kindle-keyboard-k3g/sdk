@@ -1,3 +1,10 @@
+"""
+Cryptographic JAR signing and signature verification.
+
+Performs sequential triple signing (dk, di, dn) using JDK jarsigner
+or fallback digest injection, and verifies signature integrity.
+"""
+
 import subprocess
 import shutil
 import zipfile
@@ -6,11 +13,21 @@ from pathlib import Path
 from typing import List, Optional
 
 class JarSignerError(Exception):
+    """Raised when jarsigner execution or signature injection fails."""
     pass
 
 class JarSigner:
+    """
+    Handles triple code-signing and verification of Kindle Active Content packages.
+    """
 
     def __init__(self, jarsigner_bin: Optional[str] = None):
+        """
+        Initializes the signer with an optional path to the jarsigner executable.
+
+        Args:
+            jarsigner_bin: Optional explicit path to jarsigner binary.
+        """
         self.jarsigner_bin = jarsigner_bin or shutil.which("jarsigner")
 
     def sign(
@@ -25,6 +42,18 @@ class JarSigner:
         """
         Sequentially signs the target JAR with each specified alias (dk, di, dn).
         Uses jarsigner if present; otherwise embeds standard Java JAR signature metadata.
+
+        Args:
+            jar_path: Target JAR/.azw2 package file.
+            keystore_path: Keystore containing signing certificates and private keys.
+            storepass: Password to unlock keystore and private keys.
+            aliases: List of certificate aliases to sequentially apply (e.g. ['dkDeveloper', 'diDeveloper', 'dnDeveloper']).
+            sigalg: Signature algorithm (default: 'SHA256withRSA').
+            digestalg: Message digest algorithm (default: 'SHA-256').
+
+        Raises:
+            FileNotFoundError: If target JAR or keystore does not exist.
+            JarSignerError: If jarsigner fails for any alias.
         """
         jar_path = Path(jar_path)
         keystore_path = Path(keystore_path)
@@ -54,6 +83,13 @@ class JarSigner:
             self._fallback_sign(jar_path, aliases)
 
     def _fallback_sign(self, jar_path: Path, aliases: List[str]) -> None:
+        """
+        Fallback signature injection for environments lacking jarsigner.
+
+        Args:
+            jar_path: Target archive to sign.
+            aliases: List of aliases to embed signatures for.
+        """
         with zipfile.ZipFile(jar_path, "r") as zin:
             entries = {name: zin.read(name) for name in zin.namelist()}
 
@@ -84,6 +120,15 @@ class JarSigner:
                 zout.writestr(sf_name, sf_data)
 
     def verify(self, jar_path: Path) -> bool:
+        """
+        Verifies cryptographic signatures on target JAR package.
+
+        Args:
+            jar_path: Path to JAR/.azw2 package file.
+
+        Returns:
+            True if all signatures are valid, False otherwise.
+        """
         jar_path = Path(jar_path)
         if not jar_path.exists():
             return False

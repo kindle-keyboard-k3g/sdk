@@ -7,6 +7,9 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.File;
 
+/**
+ * Desktop AWT/Swing window housing the E-Ink display panel and Kindle navigation keypad.
+ */
 public class KindleSimulatorWindow extends Frame {
 
     private final EinkScreenPanel screenPanel;
@@ -14,6 +17,13 @@ public class KindleSimulatorWindow extends Frame {
     private final SimulatorKindletContext context;
     private Kindlet activeKindlet;
 
+    /**
+     * Constructs the simulator window with target resolution and title.
+     *
+     * @param title window title
+     * @param width screen width in pixels
+     * @param height screen height in pixels
+     */
     public KindleSimulatorWindow(String title, int width, int height) {
         super(title);
         setLayout(new BorderLayout());
@@ -39,6 +49,12 @@ public class KindleSimulatorWindow extends Frame {
         pack();
     }
 
+    /**
+     * Instantiates and launches a Kindlet inside the simulator environment.
+     *
+     * @param kindlet target Kindlet instance
+     * @throws Exception if Kindlet lifecycle initialization fails
+     */
     public void launchKindlet(Kindlet kindlet) throws Exception {
         this.activeKindlet = kindlet;
         kindlet.create(context);

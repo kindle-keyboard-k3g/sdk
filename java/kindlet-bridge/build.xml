@@ -44,5 +44,11 @@
                 <pathelement path="${test.classes.dir}"/>
             </classpath>
         </java>
+        <java classname="com.amazon.kindle.bridge.network.WhispernetNetworkTest" failonerror="true">
+            <classpath>
+                <pathelement path="${classes.dir}"/>
+                <pathelement path="${test.classes.dir}"/>
+            </classpath>
+        </java>
     </target>
 </project>

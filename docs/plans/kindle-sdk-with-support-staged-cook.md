@@ -63,20 +63,20 @@ tests/
 - Consumes: `native/include/kindle/ipc.hpp`, `native/include/kindle/hardware.hpp`, `native/include/kindle/target.hpp`, `native/include/kindle/eink.hpp`.
 - Produces: `showcase_daemon` executable capable of handling `Ping`, `Command` ("get_telemetry", "generate_pattern"), and `Shutdown`.
 
-- [ ] **Step 1: Implement `system_telemetry.hpp` and `system_telemetry.cpp`**
+- [x] **Step 1: Implement `system_telemetry.hpp` and `system_telemetry.cpp`**
   - Query CPU model, SoC type, and RAM metrics (`MemoryInfo`).
   - Generate a 16-level grayscale dithered test pattern buffer (e.g. 200x120 grayscale array) representing E-Ink graphical computation in C++.
 
-- [ ] **Step 2: Implement `showcase_daemon.cpp`**
+- [x] **Step 2: Implement `showcase_daemon.cpp`**
   - Loop on `IpcChannel::read_message(std::cin, in_msg)`.
   - Handle `MessageType::Ping` -> return `MessageType::Pong`.
   - Handle `MessageType::Command` -> parse JSON action (`get_telemetry`, `generate_pattern`, `echo`) and return `MessageType::Response` with JSON / binary payload.
   - Handle `MessageType::Shutdown` -> clean exit.
 
-- [ ] **Step 3: Create CMake configuration files**
+- [x] **Step 3: Create CMake configuration files**
   - Build `showcase_daemon` supporting both host native build (for desktop simulation/testing) and ARMv6 cross-compilation (`KindleArmv6.cmake`).
 
-- [ ] **Step 4: Verify C++ build and test execution**
+- [x] **Step 4: Verify C++ build and test execution**
   - Compile `showcase_daemon` and run a quick verification with piped IPC messages.
 
 ---
@@ -93,15 +93,15 @@ tests/
 - Consumes: `java/kindlet-api` (`Kindlet`, `AbstractKindlet`, `KindletContext`, `KLabel`, `KProgressIndicator`, `KMenu`, `KMenuItem`) and `java/kindlet-bridge` (`NativeProcessSupervisor`, `RuntimeProcessLauncher`, `NativeMessage`, `NativeBridgeListener`).
 - Produces: Complete Kindlet demonstrating all platform capabilities.
 
-- [ ] **Step 1: Implement `TelemetryData.java` and `ShowcaseSettingsManager.java`**
+- [x] **Step 1: Implement `TelemetryData.java` and `ShowcaseSettingsManager.java`**
   - `TelemetryData`: Data holder for SoC, CPU architecture, total/free RAM, IPC latency, and render time.
   - `ShowcaseSettingsManager`: Reads and writes properties file to `context.getHomeDirectory() / showcase.properties`, preserving run count and user preferences.
 
-- [ ] **Step 2: Implement `ShowcaseDashboardCanvas.java`**
+- [x] **Step 2: Implement `ShowcaseDashboardCanvas.java`**
   - Custom AWT lightweight component drawing 16-level grayscale patterns, battery status bar, telemetry stats, and lifecycle event history.
   - High-contrast typography and E-Ink friendly borders.
 
-- [ ] **Step 3: Implement `ShowcaseKindlet.java`**
+- [x] **Step 3: Implement `ShowcaseKindlet.java`**
   - Implement `Kindlet`, `KeyListener`, and `NativeBridgeListener`.
   - `create(KindletContext)`:
     - Initialize UI layout: Top title `KLabel`, center `ShowcaseDashboardCanvas`, bottom `KProgressIndicator` and status `KLabel`.
@@ -128,13 +128,13 @@ tests/
 - Consumes: `java/kindlet-api/dist/kindlet-api.jar`, `java/kindlet-bridge/dist/kindlet-bridge.jar`, and compiled `showcase_daemon`.
 - Produces: `dist/kindlet-cpp-showcase.jar` and `dist/kindlet-cpp-showcase.azw2`.
 
-- [ ] **Step 1: Create `build.xml`**
+- [x] **Step 1: Create `build.xml`**
   - Configure compilation targeting Java 1.4 bytecode (`-source 1.4 -target 1.4`).
   - Bundle `kindlet-bridge` classes into the target JAR.
   - Copy compiled `showcase_daemon` into `bin/armv6/showcase_daemon` inside the JAR.
   - Generate manifest with `Main-Class: com.amazon.kindle.showcase.ShowcaseKindlet` and Amazon headers.
 
-- [ ] **Step 2: Create `scripts/build-and-run.sh`**
+- [x] **Step 2: Create `scripts/build-and-run.sh`**
   - Compile C++ daemon.
   - Run Ant to compile Java and bundle JAR.
   - Generate developer keystore with `kindle-sdk sign` (or `python3 -m kindle_sdk.cli`).
@@ -154,20 +154,20 @@ tests/
 - Consumes: The complete showcase application.
 - Produces: End-to-end automated test in CI and comprehensive guide for users.
 
-- [ ] **Step 1: Write integration test `tests/integration/test_showcase_app.py`**
+- [x] **Step 1: Write integration test `tests/integration/test_showcase_app.py`**
   - Test building the showcase C++ daemon.
   - Test compiling the Java Kindlet via Ant.
   - Test packaging and signing the `.azw2` archive.
   - Test headless simulator execution verifying `create -> start -> stop -> destroy`.
 
-- [ ] **Step 2: Create `examples/kindlet-cpp-showcase/README.md`**
+- [x] **Step 2: Create `examples/kindlet-cpp-showcase/README.md`**
   - Detailed architecture walkthrough.
   - Step-by-step instructions for compiling, signing, testing on desktop simulator, and deploying to physical Kindle 3G / DX over USB.
 
-- [ ] **Step 3: Update `docs/README.md`**
+- [x] **Step 3: Update `docs/README.md`**
   - Add pointer to `examples/kindlet-cpp-showcase/` in the documentation index.
 
-- [ ] **Step 4: Execute test suite and verify**
+- [x] **Step 4: Execute test suite and verify**
   - Run `python3 -m unittest tests/integration/test_showcase_app.py`.
   - Run `./scripts/run-tests.sh`.
 

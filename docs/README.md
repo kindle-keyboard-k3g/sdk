@@ -14,3 +14,5 @@ Comprehensive guides, specifications, architectural references, and hardware pro
 | [`docs/emulator.md`](emulator.md) | Desktop E-Ink simulator architecture, 16-level grayscale quantization, refresh simulation, and headless testing |
 | [`docs/sot/bridge-protocol.md`](sot/bridge-protocol.md) | Wire protocol framing and specification for Java-to-C++ IPC communication |
 | [`docs/sot/j2me-kindlet.md`](sot/j2me-kindlet.md) | Source-of-truth technical reference on Kindlet environment, security constraints, and jailbreak prerequisites |
+| [`examples/kindlet-cpp-showcase/README.md`](../examples/kindlet-cpp-showcase/README.md) | Production-grade reference app embedding modern C++17 inside an official Kindlet (lifecycle, IPC, 16-level grayscale canvas, signing, emulation) |
+

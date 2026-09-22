@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="kindlet-cpp-showcase" default="jar" basedir=".">
+    <property name="src.dir" value="src/main/java"/>
+    <property name="build.dir" value="build"/>
+    <property name="classes.dir" value="${build.dir}/classes"/>
+    <property name="dist.dir" value="dist"/>
+    <property name="jar.name" value="kindlet-cpp-showcase.jar"/>
+
+    <!-- Paths to kindle-sdk library dependencies -->
+    <property name="sdk.root" value="../.."/>
+    <property name="kindlet-api.jar" value="${sdk.root}/java/kindlet-api/dist/kindlet-api.jar"/>
+    <property name="kindlet-bridge.jar" value="${sdk.root}/java/kindlet-bridge/dist/kindlet-bridge.jar"/>
+
+    <target name="clean">
+        <delete dir="${build.dir}"/>
+        <delete dir="${dist.dir}"/>
+    </target>
+
+    <target name="init">
+        <mkdir dir="${classes.dir}"/>
+        <mkdir dir="${dist.dir}"/>
+    </target>
+
+    <target name="compile" depends="init">
+        <javac srcdir="${src.dir}" destdir="${classes.dir}"
+               source="1.4" target="1.4"
+               includeantruntime="false" debug="true">
+            <classpath>
+                <pathelement location="${kindlet-api.jar}"/>
+                <pathelement location="${kindlet-bridge.jar}"/>
+            </classpath>
+        </javac>
+    </target>
+
+    <target name="jar" depends="compile">
+        <!-- Unpack kindlet-bridge classes so the resulting JAR is self-contained -->
+        <unjar src="${kindlet-bridge.jar}" dest="${classes.dir}"/>
+
+        <!-- Copy native binary into JAR resources if built -->
+        <copy file="build/native/showcase_daemon" tofile="${classes.dir}/bin/showcase_daemon" failonerror="false"/>
+        <copy file="build/native/showcase_daemon" tofile="${classes.dir}/bin/armv6/showcase_daemon" failonerror="false"/>
+
+        <jar destfile="${dist.dir}/${jar.name}" basedir="${classes.dir}">
+            <manifest>
+                <attribute name="Main-Class" value="com.amazon.kindle.showcase.ShowcaseKindlet"/>
+                <attribute name="Implementation-Title" value="Kindlet Modern C++ Showcase"/>
+                <attribute name="Implementation-Version" value="1.0.0"/>
+                <attribute name="Specification-Title" value="Amazon Kindlet Application"/>
+                <attribute name="Specification-Version" value="2.1"/>
+            </manifest>
+        </jar>
+    </target>
+</project>

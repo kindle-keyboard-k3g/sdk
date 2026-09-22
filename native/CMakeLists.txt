@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(include)
 
 add_library(kindle_native STATIC
+    src/ipc.cpp
+    src/jni_bridge.cpp
     platform/fake/fake_procfs.cpp
     platform/fake/fake_eink.cpp
     platform/linux/procfs.cpp
@@ -22,3 +24,7 @@ add_test(NAME test_hardware COMMAND test_hardware)
 add_executable(test_eink tests/test_eink.cpp)
 target_link_libraries(test_eink kindle_native)
 add_test(NAME test_eink COMMAND test_eink)
+
+add_executable(test_ipc tests/test_ipc.cpp)
+target_link_libraries(test_ipc kindle_native)
+add_test(NAME test_ipc COMMAND test_ipc)

@@ -14,9 +14,16 @@ for ext in "*.keystore" "*.p12" "*.key" "*.pem"; do
     fi
 done
 
-# Scan tracked files for private key headers
-if git grep -I -i "BEGIN RSA PRIVATE KEY" || git grep -I -i "BEGIN PRIVATE KEY"; then
-    echo "SECURITY ALERT: Found private key contents in tracked files!"
+# Scan tracked files for private key headers, excluding this scanner script
+HEADER_MATCHES=$(git grep -I -i "BEGIN RSA PRIVATE KEY" -- ':!scripts/check-no-private-keys.sh' || true)
+if [ -n "${HEADER_MATCHES}" ]; then
+    echo "SECURITY ALERT: Found private key contents in tracked files: ${HEADER_MATCHES}"
+    LEAK_FOUND=1
+fi
+
+HEADER_MATCHES2=$(git grep -I -i "BEGIN PRIVATE KEY" -- ':!scripts/check-no-private-keys.sh' || true)
+if [ -n "${HEADER_MATCHES2}" ]; then
+    echo "SECURITY ALERT: Found private key contents in tracked files: ${HEADER_MATCHES2}"
     LEAK_FOUND=1
 fi
 

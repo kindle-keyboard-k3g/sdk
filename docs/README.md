@@ -6,6 +6,7 @@ Comprehensive guides, specifications, architectural references, and hardware pro
 
 | Document | Description |
 | :--- | :--- |
+| [`docs/network-guide.md`](network-guide.md) | Whispernet 3G proxy API reference for Java (WhispernetHttpClient, WhispernetSocketClient, NetworkRelayHandler) and C++ (HttpClient, TcpConnection); wire format, HTTPS guard, FakeWhispernetProxy for desktop dev |
 | [`docs/architecture.md`](architecture.md) | Kindle Keyboard (K3) and Kindle DX hardware profiles, SoCs, RAM limits, display ioctls, and CVM runtime constraints |
 | [`docs/kindlet-guide.md`](kindlet-guide.md) | Official Amazon Kindlet J2ME CDC 1.1 / Personal Basis Profile 1.1 specification, lifecycle methods, UI components, and bytecode requirements |
 | [`docs/modern-cpp-guide.md`](modern-cpp-guide.md) | Modern C++ (C++17/20) cross-compilation for ARMv6 softfp, glibc 2.5 compatibility, and native-in-Kindlet integration |

@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "KindleTargetProfile",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "enum": ["k3", "dx"]
+    },
+    "model_name": {
+      "type": "string"
+    },
+    "soc": {
+      "type": "string",
+      "enum": ["imx353", "imx31"]
+    },
+    "cpu": {
+      "type": "string",
+      "enum": ["armv6"]
+    },
+    "native_abi": {
+      "type": "string",
+      "enum": ["armv6j-softfp"]
+    },
+    "ram_bytes": {
+      "type": "integer",
+      "minimum": 16777216
+    },
+    "linux_kernel": {
+      "type": "string"
+    },
+    "glibc_version": {
+      "type": "string"
+    },
+    "display": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer", "minimum": 100 },
+        "height": { "type": "integer", "minimum": 100 },
+        "ppi": { "type": "integer", "minimum": 50 },
+        "formats": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["gray4", "gray8", "gray16"] }
+        },
+        "eink_panel": { "type": "string" }
+      },
+      "required": ["width", "height", "formats"],
+      "additionalProperties": false
+    },
+    "ioctls": {
+      "type": "object",
+      "properties": {
+        "fbio_eink_update_display": { "type": "string" },
+        "fbio_eink_update_display_area": { "type": "string" },
+        "fbio_eink_clear_screen": { "type": "string" },
+        "proc_update_path": { "type": "string" }
+      },
+      "required": ["fbio_eink_update_display", "proc_update_path"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["name", "soc", "cpu", "native_abi", "ram_bytes", "display", "ioctls"],
+  "additionalProperties": false
+}

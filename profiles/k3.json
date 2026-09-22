@@ -1,0 +1,23 @@
+{
+  "name": "k3",
+  "model_name": "Kindle Keyboard (K3 / K3G)",
+  "soc": "imx353",
+  "cpu": "armv6",
+  "native_abi": "armv6j-softfp",
+  "ram_bytes": 268435456,
+  "linux_kernel": "2.6.26-rt-lab126",
+  "glibc_version": "2.5",
+  "display": {
+    "width": 600,
+    "height": 800,
+    "ppi": 167,
+    "formats": ["gray4", "gray8", "gray16"],
+    "eink_panel": "Pearl"
+  },
+  "ioctls": {
+    "fbio_eink_update_display": "0x46db",
+    "fbio_eink_update_display_area": "0x46dd",
+    "fbio_eink_clear_screen": "0x46e1",
+    "proc_update_path": "/proc/eink_fb/update_display"
+  }
+}

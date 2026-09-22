@@ -1,0 +1,23 @@
+{
+  "name": "dx",
+  "model_name": "Kindle DX / DX Graphite",
+  "soc": "imx31",
+  "cpu": "armv6",
+  "native_abi": "armv6j-softfp",
+  "ram_bytes": 134217728,
+  "linux_kernel": "2.6.22",
+  "glibc_version": "2.5",
+  "display": {
+    "width": 824,
+    "height": 1200,
+    "ppi": 150,
+    "formats": ["gray4", "gray8", "gray16"],
+    "eink_panel": "Vizplex/Pearl"
+  },
+  "ioctls": {
+    "fbio_eink_update_display": "0x46db",
+    "fbio_eink_update_display_area": "0x46dd",
+    "fbio_eink_clear_screen": "0x46e1",
+    "proc_update_path": "/proc/eink_fb/update_display"
+  }
+}

@@ -1,22 +1,17 @@
 package com.amazon.kindle.bridge.network;
 
 /**
- * Holds the host and port of the device-local Whispernet 3G proxy.
- * Loaded from KINDLE_WHISPERNET_PROXY_HOST and KINDLE_WHISPERNET_PROXY_PORT
- * environment variables; never hardcoded.
+ * Holds the host and port of the device-local Whispernet proxy.
+ * Configuration uses standard Java system properties for CDC compatibility.
  */
 public final class WhispernetProxy {
+
+    public static final String HOST_PROPERTY = "kindle.whispernet.proxy.host";
+    public static final String PORT_PROPERTY = "kindle.whispernet.proxy.port";
 
     private final String host;
     private final int port;
 
-    /**
-     * Constructs a configured proxy address.
-     *
-     * @param host proxy hostname or IP address
-     * @param port proxy TCP port (1-65535)
-     * @throws IllegalArgumentException if host is null/empty or port is out of range
-     */
     public WhispernetProxy(String host, int port) {
         if (host == null || host.trim().length() == 0) {
             throw new IllegalArgumentException("Proxy host must not be empty");
@@ -24,51 +19,51 @@ public final class WhispernetProxy {
         if (port < 1 || port > 65535) {
             throw new IllegalArgumentException("Proxy port out of range: " + port);
         }
-        this.host = host;
+        this.host = host.trim();
         this.port = port;
     }
 
     /**
-     * Loads proxy configuration from environment variables.
-     * Returns null if KINDLE_WHISPERNET_PROXY_HOST is absent.
+     * Loads proxy configuration from system properties.
      *
-     * @return configured WhispernetProxy, or null if unconfigured
-     * @throws IllegalArgumentException if HOST is set but PORT is absent or invalid
+     * <p>System.getenv() is a Java 5 API and is not available on CDC; callers
+     * must use system properties rather than relying on an environment shim.</p>
+     *
+     * @return configured proxy, or null when the host property is absent
+     * @throws IllegalArgumentException when the properties are incomplete or invalid
      */
-    public static WhispernetProxy fromEnvironment() {
-        String host = System.getProperty("KINDLE_WHISPERNET_PROXY_HOST");
-        if (host == null) {
-            host = System.getenv("KINDLE_WHISPERNET_PROXY_HOST");
-        }
+    public static WhispernetProxy fromSystemProperties() {
+        String host = System.getProperty(HOST_PROPERTY);
         if (host == null || host.trim().length() == 0) {
             return null;
         }
-        String portStr = System.getProperty("KINDLE_WHISPERNET_PROXY_PORT");
-        if (portStr == null) {
-            portStr = System.getenv("KINDLE_WHISPERNET_PROXY_PORT");
-        }
-        if (portStr == null || portStr.trim().length() == 0) {
+
+        String portText = System.getProperty(PORT_PROPERTY);
+        if (portText == null || portText.trim().length() == 0) {
             throw new IllegalArgumentException(
-                "KINDLE_WHISPERNET_PROXY_HOST is set but KINDLE_WHISPERNET_PROXY_PORT is absent");
+                PORT_PROPERTY + " is required when " + HOST_PROPERTY + " is set");
         }
+
         int port;
         try {
-            port = Integer.parseInt(portStr.trim());
-        } catch (NumberFormatException e) {
+            port = Integer.parseInt(portText.trim());
+        } catch (NumberFormatException error) {
             throw new IllegalArgumentException(
-                "KINDLE_WHISPERNET_PROXY_PORT is not a valid integer: " + portStr);
+                PORT_PROPERTY + " is not a valid integer: " + portText);
         }
-        return new WhispernetProxy(host.trim(), port);
+        return new WhispernetProxy(host, port);
     }
 
-    /** Returns the proxy hostname or IP address. */
     public String getHost() {
         return host;
     }
 
-    /** Returns the proxy TCP port. */
     public int getPort() {
         return port;
+    }
+
+    public boolean isConfigured() {
+        return host.length() > 0 && port > 0;
     }
 
     public String toString() {

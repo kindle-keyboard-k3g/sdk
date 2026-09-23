@@ -165,7 +165,7 @@ class TestNetworkRelayIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.root = Path(__file__).resolve().parent.parent.parent
-        cls.daemon_bin = cls.root / "build" / "kindle_daemon"
+        cls.daemon_bin = cls.root / "native" / "build" / "kindle_daemon"
         cls.bridge_classes = cls.root / "java" / "kindlet-bridge" / "build" / "classes"
         cls.bridge_test_classes = cls.root / "java" / "kindlet-bridge" / "build" / "test-classes"
         cls.java_available = True

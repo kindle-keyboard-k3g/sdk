@@ -41,6 +41,7 @@ public class EmulatorLauncher {
             if (fakeProxy) {
                 proxy = new FakeWhispernetProxy();
                 proxy.start();
+                proxy.installSystemProperties();
             }
 
             File file = new File(archivePath);
@@ -97,6 +98,7 @@ public class EmulatorLauncher {
             System.exit(10);
         } finally {
             if (proxy != null) {
+                proxy.restoreSystemProperties();
                 proxy.stop();
             }
         }

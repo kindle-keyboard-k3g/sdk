@@ -1,7 +1,11 @@
 package com.amazon.kindle.bridge.network;
 
+import com.amazon.kindle.bridge.NativeMessage;
+import com.amazon.kindle.bridge.NativeProcessSupervisor;
+import com.amazon.kindle.bridge.ProcessLauncher;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -434,8 +438,7 @@ public class WhispernetNetworkTest {
             HttpResponse decoded = HttpIpcCodec.decodeResponse(payload);
             check("transport error response round-trip", decoded != null
                   && decoded.getStatusCode() == 0
-                  && decoded.getReason() != null
-                  && decoded.getReason().length() == 0);
+                  && "network timeout".equals(decoded.getReason()));
         }
 
         // Wrong schema version → null
@@ -461,95 +464,70 @@ public class WhispernetNetworkTest {
     static void testNetworkRelayHandler() throws Exception {
         System.out.println("\n-- NetworkRelayHandler --");
 
-        // null httpClient rejected
-        try {
-            new NetworkRelayHandler(null, new ByteArrayOutputStream(), null);
-            check("null httpClient rejected", false);
-        } catch (IllegalArgumentException e) {
-            check("null httpClient rejected", true);
-        }
-
-        // null stdin rejected
-        try {
-            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", findFreePort());
-            new NetworkRelayHandler(new WhispernetHttpClient(proxy), null, null);
-            check("null stdin rejected", false);
-        } catch (IllegalArgumentException e) {
-            check("null stdin rejected", true);
-        }
-
-        // Non-HTTP_REQUEST type is silently ignored
-        {
-            ByteArrayOutputStream stdout = new ByteArrayOutputStream();
-            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", findFreePort());
-            NetworkRelayHandler handler = new NetworkRelayHandler(
-                new WhispernetHttpClient(proxy), stdout, null);
-            com.amazon.kindle.bridge.NativeMessage pingMsg = new com.amazon.kindle.bridge.NativeMessage(
-                com.amazon.kindle.bridge.NativeMessage.TYPE_PING, 0, new byte[0]);
-            handler.handleMessage(pingMsg);
-            check("non-HTTP_REQUEST type ignored (no output)", stdout.size() == 0);
-        }
-
-        // Malformed payload → transport-error response written to stdout
-        {
-            ByteArrayOutputStream stdout = new ByteArrayOutputStream();
-            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", findFreePort());
-            NetworkRelayHandler handler = new NetworkRelayHandler(
-                new WhispernetHttpClient(proxy), stdout, null);
-            com.amazon.kindle.bridge.NativeMessage badMsg = new com.amazon.kindle.bridge.NativeMessage(
-                com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_REQUEST, 42, new byte[]{0x00});
-            handler.handleMessage(badMsg);
-            check("malformed payload → response written", stdout.size() > 0);
-            // Parse the written frame and verify it is a transport error
-            com.amazon.kindle.bridge.NativeMessage reply =
-                com.amazon.kindle.bridge.NativeMessage.readFrom(
-                    new ByteArrayInputStream(stdout.toByteArray()));
-            check("malformed payload → HTTP_RESPONSE type",
-                  reply.getType() == com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_RESPONSE);
-            check("malformed payload → request ID echoed", reply.getRequestId() == 42);
-            HttpResponse decodedResp = HttpIpcCodec.decodeResponse(reply.getPayload());
-            check("malformed payload → transport error response",
-                  decodedResp != null && decodedResp.isTransportError());
-        }
-
-        // Successful relay via fake proxy: listener is called with response
-        {
-            String fakeReply = "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nhi";
-            FakeProxyServer server = new FakeProxyServer(fakeReply.getBytes("US-ASCII"));
-            server.start();
-
-            ByteArrayOutputStream stdout = new ByteArrayOutputStream();
-            WhispernetProxy proxy = new WhispernetProxy("127.0.0.1", server.getPort());
-            final HttpResponse[] listenerResult = new HttpResponse[1];
-            final int[] listenerRequestId = new int[]{-1};
-            NetworkRelayHandler handler = new NetworkRelayHandler(
-                new WhispernetHttpClient(proxy), stdout,
-                new HttpResponseListener() {
-                    public void onHttpResponse(int requestId, HttpResponse response) {
-                        listenerRequestId[0] = requestId;
-                        listenerResult[0] = response;
+        final ByteArrayOutputStream nativeOutput = new ByteArrayOutputStream();
+        ProcessLauncher launcher = new ProcessLauncher() {
+            public Process launch(String[] command, File workingDirectory) {
+                return new Process() {
+                    public OutputStream getOutputStream() { return nativeOutput; }
+                    public InputStream getInputStream() {
+                        return new InputStream() {
+                            public int read() throws IOException {
+                                try { Thread.sleep(5000); } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                return -1;
+                            }
+                        };
                     }
-                });
+                    public InputStream getErrorStream() { return new ByteArrayInputStream(new byte[0]); }
+                    public int waitFor() { return 0; }
+                    public int exitValue() { return 0; }
+                    public void destroy() {}
+                };
+            }
+        };
+        NativeProcessSupervisor supervisor = new NativeProcessSupervisor(launcher, new File("/tmp"));
+        final HttpResponse[] responseHolder = new HttpResponse[1];
+        final String[] errorHolder = new String[1];
+        NetworkRelayHandler handler = new NetworkRelayHandler(supervisor, null);
+        supervisor.start(new File("/tmp/native"), handler);
 
-            HttpRequest req = new HttpRequest("GET", "http://example.com/");
-            byte[] encodedReq = HttpIpcCodec.encodeRequest(req);
-            com.amazon.kindle.bridge.NativeMessage reqMsg = new com.amazon.kindle.bridge.NativeMessage(
-                com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_REQUEST, 99, encodedReq);
-            handler.handleMessage(reqMsg);
-            server.stop();
+        int requestId = handler.sendHttpRequest(
+            new HttpRequest("GET", "http://example.com/"),
+            new HttpResponseListener() {
+                public void onHttpResponse(int id, HttpResponse response) {
+                    responseHolder[0] = response;
+                }
+                public void onHttpError(int id, String message) {
+                    errorHolder[0] = message;
+                }
+            });
+        NativeMessage requestFrame = NativeMessage.readFrom(
+            new ByteArrayInputStream(nativeOutput.toByteArray()));
+        check("relay sends HTTP_REQUEST frame",
+              requestFrame.getType() == NativeMessage.TYPE_HTTP_REQUEST);
+        check("relay allocates request ID", requestFrame.getRequestId() == requestId);
 
-            check("relay listener called", listenerResult[0] != null);
-            check("relay listener request ID", listenerRequestId[0] == 99);
-            check("relay response status 200",
-                  listenerResult[0] != null && listenerResult[0].getStatusCode() == 200);
-            // Verify frame written to stdout
-            com.amazon.kindle.bridge.NativeMessage reply =
-                com.amazon.kindle.bridge.NativeMessage.readFrom(
-                    new ByteArrayInputStream(stdout.toByteArray()));
-            check("relay frame type HTTP_RESPONSE",
-                  reply.getType() == com.amazon.kindle.bridge.NativeMessage.TYPE_HTTP_RESPONSE);
-            check("relay frame request ID echoed", reply.getRequestId() == 99);
-        }
+        HttpResponse nativeResponse = new HttpResponse(200, "OK", new Vector(),
+                                                       "ok".getBytes("US-ASCII"));
+        handler.onNativeMessage(new NativeMessage(
+            NativeMessage.TYPE_HTTP_RESPONSE, requestId,
+            HttpIpcCodec.encodeResponse(nativeResponse)));
+        check("relay dispatches response", responseHolder[0] != null &&
+              responseHolder[0].getStatusCode() == 200);
+        check("relay has no response error", errorHolder[0] == null);
+
+        final String[] terminationError = new String[1];
+        handler.sendHttpRequest(new HttpRequest("GET", "http://example.com/"),
+            new HttpResponseListener() {
+                public void onHttpResponse(int id, HttpResponse response) {}
+                public void onHttpError(int id, String message) {
+                    terminationError[0] = message;
+                }
+            });
+        handler.onNativeProcessTerminated(1);
+        check("relay reports process termination", terminationError[0] != null);
+        supervisor.stop();
     }
 
     // -------------------------------------------------------------------------

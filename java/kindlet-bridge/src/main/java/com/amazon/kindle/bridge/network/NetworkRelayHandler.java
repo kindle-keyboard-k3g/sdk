@@ -1,88 +1,175 @@
 package com.amazon.kindle.bridge.network;
 
+import com.amazon.kindle.bridge.NativeBridgeListener;
 import com.amazon.kindle.bridge.NativeMessage;
+import com.amazon.kindle.bridge.NativeProcessSupervisor;
 import java.io.IOException;
-import java.io.OutputStream;
+import java.util.Enumeration;
+import java.util.Hashtable;
 
 /**
- * Handles incoming TYPE_HTTP_REQUEST IPC frames from a native C++ process,
- * proxies them via WhispernetHttpClient, and writes TYPE_HTTP_RESPONSE frames
- * back to the process stdin.
+ * Relays Java HTTP requests to a supervised native process.
  *
- * Thread safety: handleMessage() is called from the supervisor's reader thread.
- * The proxy calls are blocking; keep one relay per daemon process or run
- * dispatching in a dedicated thread pool.
+ * <p>The kindlet owns the request side of the relay: requests are encoded as
+ * TYPE_HTTP_REQUEST frames and sent to the native daemon. Responses are
+ * correlated by request ID when TYPE_HTTP_RESPONSE frames arrive. All other
+ * native frames are forwarded to the application's listener.</p>
  *
  * Compatible with Java 1.4 / CDC 1.1.
  */
-public class NetworkRelayHandler {
+public final class NetworkRelayHandler implements NativeBridgeListener {
 
-    private final WhispernetHttpClient httpClient;
-    private final OutputStream processStdin;
-    private final HttpResponseListener listener;
+    private final NativeProcessSupervisor supervisor;
+    private final NativeBridgeListener applicationListener;
+    private final Hashtable pending = new Hashtable();
+    private int nextRequestId = 1;
 
     /**
-     * Constructs a relay handler.
+     * Constructs a relay around a native process supervisor.
      *
-     * @param httpClient   Whispernet HTTP client to use for outbound requests
-     * @param processStdin stdin stream of the native process to reply to
-     * @param listener     optional callback for responses (may be null)
+     * @param supervisor supervisor used to send frames to the daemon
+     * @param applicationListener listener for non-HTTP native messages; may be null
      */
-    public NetworkRelayHandler(WhispernetHttpClient httpClient,
-                               OutputStream processStdin,
-                               HttpResponseListener listener) {
-        if (httpClient == null) {
-            throw new IllegalArgumentException("httpClient must not be null");
+    public NetworkRelayHandler(NativeProcessSupervisor supervisor,
+                               NativeBridgeListener applicationListener) {
+        if (supervisor == null) {
+            throw new IllegalArgumentException("supervisor must not be null");
         }
-        if (processStdin == null) {
-            throw new IllegalArgumentException("processStdin must not be null");
-        }
-        this.httpClient   = httpClient;
-        this.processStdin = processStdin;
-        this.listener     = listener;
+        this.supervisor = supervisor;
+        this.applicationListener = applicationListener;
+    }
+
+    /** Constructs a relay without an application-level fallback listener. */
+    public NetworkRelayHandler(NativeProcessSupervisor supervisor) {
+        this(supervisor, null);
     }
 
     /**
-     * Processes a received IPC message. Only TYPE_HTTP_REQUEST messages are
-     * handled; all other types are silently ignored.
+     * Encodes and sends an HTTP request to the native daemon.
      *
-     * @param message incoming IPC message
+     * @param request request to relay
+     * @param listener callback for the correlated response or transport error
+     * @return allocated monotonic request ID
+     * @throws IOException if the frame cannot be written
      */
-    public void handleMessage(NativeMessage message) {
-        if (message.getType() != NativeMessage.TYPE_HTTP_REQUEST) {
-            return;
-        }
-        int requestId = message.getRequestId();
-        HttpRequest request = HttpIpcCodec.decodeRequest(message.getPayload());
+    public int sendHttpRequest(HttpRequest request, HttpResponseListener listener)
+            throws IOException {
         if (request == null) {
-            sendErrorResponse(requestId, "Malformed HTTP_REQUEST payload");
-            return;
+            throw new IllegalArgumentException("request must not be null");
         }
-        HttpResponse response = httpClient.execute(request);
-        sendResponse(requestId, response);
-    }
+        if (listener == null) {
+            throw new IllegalArgumentException("listener must not be null");
+        }
 
-    private void sendResponse(int requestId, HttpResponse response) {
-        byte[] payload = HttpIpcCodec.encodeResponse(response);
+        byte[] payload = HttpIpcCodec.encodeRequest(request);
         if (payload == null) {
-            sendErrorResponse(requestId, "Failed to encode HTTP_RESPONSE");
+            throw new IOException("Unable to encode HTTP request");
+        }
+
+        int requestId;
+        synchronized (this) {
+            requestId = allocateRequestId();
+            pending.put(Integer.valueOf(requestId), listener);
+        }
+
+        NativeMessage message = new NativeMessage(
+            NativeMessage.TYPE_HTTP_REQUEST, requestId, payload);
+        try {
+            supervisor.sendMessage(message);
+        } catch (IOException error) {
+            HttpResponseListener removed;
+            synchronized (this) {
+                removed = (HttpResponseListener) pending.remove(
+                    Integer.valueOf(requestId));
+            }
+            if (removed != null) {
+                removed.onHttpError(requestId, error.getMessage());
+            }
+            throw error;
+        }
+        return requestId;
+    }
+
+    private int allocateRequestId() throws IOException {
+        int candidate = nextRequestId;
+        while (pending.containsKey(Integer.valueOf(candidate))) {
+            candidate++;
+            if (candidate <= 0) {
+                candidate = 1;
+            }
+            if (candidate == nextRequestId) {
+                throw new IOException("No request IDs available");
+            }
+        }
+        nextRequestId = candidate + 1;
+        if (nextRequestId <= 0) {
+            nextRequestId = 1;
+        }
+        return candidate;
+    }
+
+    /**
+     * Receives a native frame and dispatches it to the matching callback.
+     */
+    public void onNativeMessage(NativeMessage message) {
+        if (message == null) {
             return;
         }
-        NativeMessage reply = new NativeMessage(NativeMessage.TYPE_HTTP_RESPONSE,
-                                                requestId, payload);
-        try {
-            synchronized (processStdin) {
-                reply.writeTo(processStdin);
-            }
-        } catch (IOException e) {
-            // Process is gone; nothing more to do
+        if (message.getType() == NativeMessage.TYPE_HTTP_RESPONSE) {
+            dispatchHttpResponse(message);
+            return;
         }
-        if (listener != null) {
-            listener.onHttpResponse(requestId, response);
+        if (applicationListener != null) {
+            applicationListener.onMessageReceived(message);
         }
     }
 
-    private void sendErrorResponse(int requestId, String error) {
-        sendResponse(requestId, new HttpResponse(error));
+    private void dispatchHttpResponse(NativeMessage message) {
+        HttpResponseListener listener;
+        int requestId = message.getRequestId();
+        synchronized (this) {
+            listener = (HttpResponseListener) pending.remove(
+                Integer.valueOf(requestId));
+        }
+        if (listener == null) {
+            return;
+        }
+
+        HttpResponse response = HttpIpcCodec.decodeResponse(message.getPayload());
+        if (response == null) {
+            listener.onHttpError(requestId, "Malformed HTTP_RESPONSE payload");
+            return;
+        }
+        listener.onHttpResponse(requestId, response);
+    }
+
+    /**
+     * Notifies all outstanding requests that the native process terminated.
+     */
+    public void onNativeProcessTerminated(int exitCode) {
+        Hashtable outstanding;
+        synchronized (this) {
+            outstanding = (Hashtable) pending.clone();
+            pending.clear();
+        }
+
+        Enumeration keys = outstanding.keys();
+        while (keys.hasMoreElements()) {
+            Integer requestId = (Integer) keys.nextElement();
+            HttpResponseListener listener = (HttpResponseListener) outstanding.get(requestId);
+            listener.onHttpError(requestId.intValue(),
+                "Native process terminated with exit code " + exitCode);
+        }
+        if (applicationListener != null) {
+            applicationListener.onProcessTerminated(exitCode);
+        }
+    }
+
+    public void onMessageReceived(NativeMessage message) {
+        onNativeMessage(message);
+    }
+
+    public void onProcessTerminated(int exitCode) {
+        onNativeProcessTerminated(exitCode);
     }
 }

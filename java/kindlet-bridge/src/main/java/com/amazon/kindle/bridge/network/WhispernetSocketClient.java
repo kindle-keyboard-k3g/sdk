@@ -41,6 +41,9 @@ public class WhispernetSocketClient {
         if (targetHost == null || targetHost.trim().length() == 0) {
             throw new IllegalArgumentException("targetHost must not be empty");
         }
+        if (targetHost.indexOf('\r') >= 0 || targetHost.indexOf('\n') >= 0) {
+            throw new IOException("targetHost contains CRLF characters");
+        }
         if (targetPort < 1 || targetPort > 65535) {
             throw new IllegalArgumentException("targetPort out of range: " + targetPort);
         }

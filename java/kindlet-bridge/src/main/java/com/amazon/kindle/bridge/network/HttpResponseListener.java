@@ -13,4 +13,12 @@ public interface HttpResponseListener {
      * @param response  HTTP response, or a transport-error response on failure
      */
     void onHttpResponse(int requestId, HttpResponse response);
+
+    /**
+     * Called when the native process cannot complete a pending HTTP request.
+     *
+     * @param requestId original request correlation ID
+     * @param message human-readable error message
+     */
+    void onHttpError(int requestId, String message);
 }

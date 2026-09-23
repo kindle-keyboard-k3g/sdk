@@ -1,68 +1,53 @@
 package com.amazon.kindle.emulator;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Vector;
 
 /**
- * In-process fake HTTP proxy that emulates the Whispernet 3G proxy for desktop
- * development. Forwards requests to the real internet via java.net.URL, allowing
- * kindlets to call WhispernetHttpClient on a developer machine without a physical
- * device.
- *
- * Start with {@link #start()} before setting KINDLE_WHISPERNET_PROXY_HOST/PORT
- * environment properties; stop with {@link #stop()} when done.
- *
- * This class is only intended for development and testing — do not ship it in
- * production kindlet JARs.
+ * Deterministic in-process Whispernet proxy for emulator development.
+ * It serves only canned local routes and never forwards to the Internet.
  */
 public class FakeWhispernetProxy {
 
+    public static final String HOST_PROPERTY = "kindle.whispernet.proxy.host";
+    public static final String PORT_PROPERTY = "kindle.whispernet.proxy.port";
+
+    private static final int MAX_REQUEST_LINE = 8192;
+    private static final int MAX_HEADER_LINE = 8192;
+    private static final int MAX_HEADER_COUNT = 100;
+    private static final int MAX_BODY = 1024 * 1024;
+
     private ServerSocket serverSocket;
     private Thread acceptThread;
-    private volatile boolean running = false;
+    private volatile boolean running;
+    private boolean propertiesInstalled;
+    private String previousHost;
+    private String previousPort;
 
-    /**
-     * Starts the fake proxy on an OS-assigned port.
-     *
-     * @throws IOException if the server socket cannot be bound
-     */
     public void start() throws IOException {
+        if (running) {
+            throw new IllegalStateException("FakeWhispernetProxy is already running");
+        }
         serverSocket = new ServerSocket(0);
         running = true;
-
-        System.setProperty("KINDLE_WHISPERNET_PROXY_HOST", "127.0.0.1");
-        System.setProperty("KINDLE_WHISPERNET_PROXY_PORT", String.valueOf(serverSocket.getLocalPort()));
-        System.out.println("[FakeWhispernetProxy] listening on 127.0.0.1:" + serverSocket.getLocalPort());
-
         acceptThread = new Thread(new Runnable() {
             public void run() {
-                while (running) {
-                    try {
-                        Socket client = serverSocket.accept();
-                        Thread handler = new Thread(new ConnectionHandler(client));
-                        handler.setDaemon(true);
-                        handler.start();
-                    } catch (IOException e) {
-                        if (running) {
-                            System.err.println("[FakeWhispernetProxy] accept error: " + e.getMessage());
-                        }
-                    }
-                }
+                acceptConnections();
             }
         });
         acceptThread.setDaemon(true);
         acceptThread.start();
     }
 
-    /**
-     * Returns the port the fake proxy is listening on.
-     *
-     * @return TCP port number
-     * @throws IllegalStateException if start() has not been called
-     */
+    public String getHost() {
+        return "127.0.0.1";
+    }
+
     public int getPort() {
         if (serverSocket == null) {
             throw new IllegalStateException("FakeWhispernetProxy not started");
@@ -70,27 +55,73 @@ public class FakeWhispernetProxy {
         return serverSocket.getLocalPort();
     }
 
-    /**
-     * Stops the fake proxy and releases its port.
-     */
+    /** Installs this proxy's system properties while saving prior values. */
+    public synchronized void installSystemProperties() {
+        if (!propertiesInstalled) {
+            previousHost = System.getProperty(HOST_PROPERTY);
+            previousPort = System.getProperty(PORT_PROPERTY);
+            propertiesInstalled = true;
+        }
+        System.setProperty(HOST_PROPERTY, getHost());
+        System.setProperty(PORT_PROPERTY, String.valueOf(getPort()));
+    }
+
+    /** Restores the exact system property state present before installation. */
+    public synchronized void restoreSystemProperties() {
+        if (!propertiesInstalled) {
+            return;
+        }
+        restoreProperty(HOST_PROPERTY, previousHost);
+        restoreProperty(PORT_PROPERTY, previousPort);
+        previousHost = null;
+        previousPort = null;
+        propertiesInstalled = false;
+    }
+
     public void stop() {
         running = false;
         try {
             if (serverSocket != null) {
                 serverSocket.close();
             }
-        } catch (IOException ignored) {}
-        System.clearProperty("KINDLE_WHISPERNET_PROXY_HOST");
-        System.clearProperty("KINDLE_WHISPERNET_PROXY_PORT");
+        } catch (IOException ignored) {
+        }
+        if (acceptThread != null) {
+            try {
+                acceptThread.join(1000);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        serverSocket = null;
+        acceptThread = null;
     }
 
-    // -------------------------------------------------------------------------
-    // Per-connection handler: reads one request, forwards it, writes response
-    // -------------------------------------------------------------------------
+    private static void restoreProperty(String key, String value) {
+        if (value == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, value);
+        }
+    }
 
-    private static class ConnectionHandler implements Runnable {
+    private void acceptConnections() {
+        while (running) {
+            try {
+                Socket client = serverSocket.accept();
+                Thread handler = new Thread(new ConnectionHandler(client));
+                handler.setDaemon(true);
+                handler.start();
+            } catch (IOException error) {
+                if (running) {
+                    System.err.println("[FakeWhispernetProxy] accept error: " + error.getMessage());
+                }
+            }
+        }
+    }
+
+    private static final class ConnectionHandler implements Runnable {
         private final Socket client;
-        private static final int MAX_BODY = 1024 * 1024;
 
         ConnectionHandler(Socket client) {
             this.client = client;
@@ -99,121 +130,203 @@ public class FakeWhispernetProxy {
         public void run() {
             try {
                 client.setSoTimeout(10000);
-                InputStream in   = client.getInputStream();
-                OutputStream out = client.getOutputStream();
-
-                String requestLine = readLine(in);
-                if (requestLine == null || requestLine.trim().length() == 0) {
+                InputStream input = client.getInputStream();
+                OutputStream output = client.getOutputStream();
+                String requestLine = readLine(input, MAX_REQUEST_LINE);
+                if (requestLine == null) {
                     return;
                 }
 
-                // Drain request headers; collect Content-Length
-                int contentLength = 0;
-                String headerLine;
-                while ((headerLine = readLine(in)) != null && headerLine.length() > 0) {
-                    if (headerLine.toLowerCase().startsWith("content-length:")) {
-                        try {
-                            contentLength = Integer.parseInt(headerLine.substring(15).trim());
-                        } catch (NumberFormatException ignored) {}
-                    }
-                }
-
-                // Drain any request body (for POST/PUT)
-                if (contentLength > 0) {
-                    byte[] bodyBuf = new byte[Math.min(contentLength, MAX_BODY)];
-                    int remaining = bodyBuf.length;
-                    int offset = 0;
-                    while (remaining > 0) {
-                        int read = in.read(bodyBuf, offset, remaining);
-                        if (read < 0) break;
-                        offset += read;
-                        remaining -= read;
-                    }
-                }
-
-                // Parse: "METHOD absolute-url HTTP/version"
-                String[] parts = requestLine.split(" ", 3);
-                if (parts.length < 2) {
-                    writeError(out, 400, "Bad Request");
-                    return;
-                }
-                String url = parts[1];
-                if (url.startsWith("https://")) {
-                    writeError(out, 501, "HTTPS not supported by FakeWhispernetProxy");
+                Vector headers = new Vector();
+                int contentLength = readHeaders(input, headers);
+                byte[] body = readBody(input, contentLength);
+                String[] requestParts = splitRequestLine(requestLine);
+                if (requestParts == null) {
+                    writeNotFound(output);
                     return;
                 }
 
-                // Forward via java.net.URL
-                java.net.URL target;
-                try {
-                    target = new java.net.URL(url);
-                } catch (java.net.MalformedURLException e) {
-                    writeError(out, 400, "Malformed URL");
+                if ("CONNECT".equalsIgnoreCase(requestParts[0])) {
+                    writeConnectEstablished(output);
+                    echoTunnel(input, output);
                     return;
                 }
 
-                java.net.URLConnection conn = target.openConnection();
-                conn.setConnectTimeout(10000);
-                conn.setReadTimeout(10000);
-                conn.setDoInput(true);
-
-                int responseCode = 200;
-                String responseMessage = "OK";
-                if (conn instanceof java.net.HttpURLConnection) {
-                    java.net.HttpURLConnection http = (java.net.HttpURLConnection) conn;
-                    http.setRequestMethod(parts[0]);
-                    responseCode    = http.getResponseCode();
-                    responseMessage = http.getResponseMessage();
+                String path = routePath(requestParts[1]);
+                if ("GET".equalsIgnoreCase(requestParts[0]) && "/health".equals(path)) {
+                    writeResponse(output, "application/json", "{\"status\":\"ok\"}".getBytes("UTF-8"));
+                } else if ("GET".equalsIgnoreCase(requestParts[0]) && "/echo".equals(path)) {
+                    writeResponse(output, "application/json", headersJson(headers).getBytes("UTF-8"));
+                } else if ("POST".equalsIgnoreCase(requestParts[0]) && "/post".equals(path)) {
+                    writeResponse(output, "application/octet-stream", body);
+                } else {
+                    writeNotFound(output);
                 }
-
-                byte[] body = readAll(conn.getInputStream());
-
-                // Write minimal HTTP/1.0 response
-                String responseHeader = "HTTP/1.0 " + responseCode + " " + responseMessage + "\r\n"
-                                      + "Content-Length: " + body.length + "\r\n"
-                                      + "\r\n";
-                out.write(responseHeader.getBytes("US-ASCII"));
-                out.write(body);
-                out.flush();
-
-            } catch (IOException e) {
-                System.err.println("[FakeWhispernetProxy] handler error: " + e.getMessage());
+            } catch (IOException error) {
+                System.err.println("[FakeWhispernetProxy] handler error: " + error.getMessage());
             } finally {
-                try { client.close(); } catch (IOException ignored) {}
-            }
-        }
-
-        private static void writeError(OutputStream out, int code, String message) throws IOException {
-            String resp = "HTTP/1.0 " + code + " " + message + "\r\nContent-Length: 0\r\n\r\n";
-            out.write(resp.getBytes("US-ASCII"));
-            out.flush();
-        }
-
-        private static String readLine(InputStream in) throws IOException {
-            StringBuffer sb = new StringBuffer();
-            int b;
-            while ((b = in.read()) != -1) {
-                if (b == '\n') {
-                    int len = sb.length();
-                    if (len > 0 && sb.charAt(len - 1) == '\r') {
-                        sb.deleteCharAt(len - 1);
-                    }
-                    return sb.toString();
+                try {
+                    client.close();
+                } catch (IOException ignored) {
                 }
-                sb.append((char) b);
             }
-            return sb.length() > 0 ? sb.toString() : null;
         }
 
-        private static byte[] readAll(InputStream in) throws IOException {
-            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-            byte[] buf = new byte[4096];
-            int read;
-            while ((read = in.read(buf)) != -1) {
-                baos.write(buf, 0, read);
-                if (baos.size() > MAX_BODY) break;
+        private static int readHeaders(InputStream input, Vector headers) throws IOException {
+            int contentLength = 0;
+            int count = 0;
+            while (true) {
+                String line = readLine(input, MAX_HEADER_LINE);
+                if (line == null) {
+                    throw new IOException("Unexpected EOF while reading headers");
+                }
+                if (line.length() == 0) {
+                    return contentLength;
+                }
+                count++;
+                if (count > MAX_HEADER_COUNT) {
+                    throw new IOException("Too many request headers");
+                }
+                int colon = line.indexOf(':');
+                if (colon <= 0) {
+                    continue;
+                }
+                String name = line.substring(0, colon).trim();
+                String value = line.substring(colon + 1).trim();
+                headers.addElement(new String[]{name, value});
+                if ("content-length".equalsIgnoreCase(name)) {
+                    try {
+                        contentLength = Integer.parseInt(value);
+                    } catch (NumberFormatException error) {
+                        throw new IOException("Invalid Content-Length");
+                    }
+                    if (contentLength < 0 || contentLength > MAX_BODY) {
+                        throw new IOException("Request body exceeds 1 MiB limit");
+                    }
+                }
             }
-            return baos.toByteArray();
+        }
+
+        private static byte[] readBody(InputStream input, int length) throws IOException {
+            byte[] body = new byte[length];
+            int offset = 0;
+            while (offset < length) {
+                int count = input.read(body, offset, length - offset);
+                if (count < 0) {
+                    throw new IOException("Unexpected EOF while reading request body");
+                }
+                offset += count;
+            }
+            return body;
+        }
+
+        private static String[] splitRequestLine(String line) {
+            int firstSpace = line.indexOf(' ');
+            if (firstSpace <= 0) {
+                return null;
+            }
+            int secondSpace = line.indexOf(' ', firstSpace + 1);
+            if (secondSpace <= firstSpace + 1) {
+                return null;
+            }
+            return new String[]{line.substring(0, firstSpace),
+                                line.substring(firstSpace + 1, secondSpace)};
+        }
+
+        private static String routePath(String target) {
+            int schemeEnd = target.indexOf("://");
+            if (schemeEnd >= 0) {
+                int pathStart = target.indexOf('/', schemeEnd + 3);
+                return pathStart >= 0 ? stripQuery(target.substring(pathStart)) : "/";
+            }
+            return stripQuery(target);
+        }
+
+        private static String stripQuery(String path) {
+            int query = path.indexOf('?');
+            return query >= 0 ? path.substring(0, query) : path;
+        }
+
+        private static String headersJson(Vector headers) {
+            StringBuffer json = new StringBuffer("{");
+            for (int index = 0; index < headers.size(); index++) {
+                if (index > 0) {
+                    json.append(',');
+                }
+                String[] pair = (String[]) headers.elementAt(index);
+                json.append('"').append(jsonEscape(pair[0])).append("\":\"");
+                json.append(jsonEscape(pair[1])).append('"');
+            }
+            json.append('}');
+            return json.toString();
+        }
+
+        private static String jsonEscape(String value) {
+            StringBuffer escaped = new StringBuffer();
+            for (int index = 0; index < value.length(); index++) {
+                char character = value.charAt(index);
+                if (character == '\\' || character == '"') {
+                    escaped.append('\\');
+                }
+                if (character == '\r') {
+                    escaped.append("\\r");
+                } else if (character == '\n') {
+                    escaped.append("\\n");
+                } else if (character < 0x20) {
+                    escaped.append('?');
+                } else {
+                    escaped.append(character);
+                }
+            }
+            return escaped.toString();
+        }
+
+        private static void writeResponse(OutputStream output, String contentType,
+                                          byte[] body) throws IOException {
+            String header = "HTTP/1.1 200 OK\r\nContent-Type: " + contentType + "\r\n\r\n";
+            output.write(header.getBytes("US-ASCII"));
+            output.write(body);
+            output.flush();
+        }
+
+        private static void writeNotFound(OutputStream output) throws IOException {
+            output.write("HTTP/1.1 404 Not Found\r\n\r\n".getBytes("US-ASCII"));
+            output.flush();
+        }
+
+        private static void writeConnectEstablished(OutputStream output) throws IOException {
+            output.write("HTTP/1.1 200 Connection established\r\n\r\n".getBytes("US-ASCII"));
+            output.flush();
+        }
+
+        private static void echoTunnel(InputStream input, OutputStream output)
+                throws IOException {
+            byte[] buffer = new byte[4096];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+                output.flush();
+            }
+        }
+
+        private static String readLine(InputStream input, int maximumLength)
+                throws IOException {
+            StringBuffer line = new StringBuffer();
+            int value;
+            while ((value = input.read()) != -1) {
+                if (value == '\n') {
+                    int length = line.length();
+                    if (length > 0 && line.charAt(length - 1) == '\r') {
+                        line.deleteCharAt(length - 1);
+                    }
+                    return line.toString();
+                }
+                line.append((char) value);
+                if (line.length() > maximumLength) {
+                    throw new IOException("HTTP line exceeds maximum length");
+                }
+            }
+            return line.length() == 0 ? null : line.toString();
         }
     }
 }

@@ -10,28 +10,13 @@ public final class HttpRequest {
 
     private final String method;
     private final String url;
-    private final Vector headers;  // Vector of String[2] {name, value}
+    private final Vector headers;
     private final byte[] body;
 
-    /**
-     * Constructs an HTTP request.
-     *
-     * @param method HTTP method (GET, POST, etc.); must not be null/empty
-     * @param url    absolute URL; must not be null/empty
-     * @throws IllegalArgumentException if method or url is null/empty
-     */
     public HttpRequest(String method, String url) {
         this(method, url, new Vector(), new byte[0]);
     }
 
-    /**
-     * Constructs an HTTP request with headers and body.
-     *
-     * @param method  HTTP method
-     * @param url     absolute URL
-     * @param headers ordered header pairs; each element must be String[2]
-     * @param body    request body bytes; null treated as empty
-     */
     public HttpRequest(String method, String url, Vector headers, byte[] body) {
         if (method == null || method.trim().length() == 0) {
             throw new IllegalArgumentException("HTTP method must not be empty");
@@ -39,47 +24,65 @@ public final class HttpRequest {
         if (url == null || url.trim().length() == 0) {
             throw new IllegalArgumentException("HTTP url must not be empty");
         }
-        this.method  = method;
-        this.url     = url;
-        this.headers = (headers != null) ? headers : new Vector();
-        this.body    = (body != null) ? body : new byte[0];
+        this.method = method;
+        this.url = url;
+        this.headers = copyHeaders(headers);
+        this.body = copyBytes(body);
     }
 
-    /** Returns the HTTP method string. */
-    public String getMethod() { return method; }
+    public String getMethod() {
+        return method;
+    }
 
-    /** Returns the absolute URL string. */
-    public String getUrl() { return url; }
+    public String getUrl() {
+        return url;
+    }
 
-    /**
-     * Returns the ordered header list.
-     * Each element is a String[2] array: {name, value}.
-     */
-    public Vector getHeaders() { return headers; }
+    /** Returns a defensive copy of the ordered header list. */
+    public Vector getHeaders() {
+        return copyHeaders(headers);
+    }
 
-    /** Returns the request body bytes (never null; may be empty). */
-    public byte[] getBody() { return body; }
+    /** Returns a defensive copy of the request body. */
+    public byte[] getBody() {
+        return copyBytes(body);
+    }
 
-    /**
-     * Returns a new HttpRequest with one extra header appended.
-     *
-     * @param name  header name
-     * @param value header value
-     * @return new HttpRequest with the added header
-     */
     public HttpRequest withHeader(String name, String value) {
-        Vector newHeaders = new Vector(headers);
+        Vector newHeaders = copyHeaders(headers);
         newHeaders.addElement(new String[]{name, value});
         return new HttpRequest(method, url, newHeaders, body);
     }
 
-    /**
-     * Returns a new HttpRequest with the given body.
-     *
-     * @param newBody replacement body bytes
-     * @return new HttpRequest with the new body
-     */
     public HttpRequest withBody(byte[] newBody) {
         return new HttpRequest(method, url, headers, newBody);
+    }
+
+    private static Vector copyHeaders(Vector source) {
+        Vector result = new Vector();
+        if (source == null) {
+            return result;
+        }
+        for (int index = 0; index < source.size(); index++) {
+            Object value = source.elementAt(index);
+            if (!(value instanceof String[])) {
+                throw new IllegalArgumentException("Header must be a String[2]");
+            }
+            String[] pair = (String[]) value;
+            if (pair.length != 2 || pair[0] == null || pair[1] == null) {
+                throw new IllegalArgumentException("Header must contain name and value");
+            }
+            result.addElement(new String[]{pair[0], pair[1]});
+        }
+        return result;
+    }
+
+    private static byte[] copyBytes(byte[] source) {
+        if (source == null || source.length == 0) {
+            return new byte[0];
+        }
+        byte[] result = new byte[source.length];
+        System.arraycopy(source, 0, result, 0, source.length);
+        return result;
     }
 }

@@ -74,8 +74,27 @@ public class NativeProcessSupervisor {
      * @throws IOException if launch fails
      */
     public void start(File executableFile, NativeBridgeListener listener) throws IOException {
+        start(executableFile, listener, new String[0]);
+    }
+
+    /**
+     * Launches the native binary with additional command-line arguments.
+     *
+     * @param executableFile target executable
+     * @param listener event listener for incoming messages and termination
+     * @param extraArguments additional arguments passed after the executable
+     * @throws IOException if launch fails
+     */
+    public void start(File executableFile, NativeBridgeListener listener,
+                      String[] extraArguments) throws IOException {
+        if (executableFile == null) {
+            throw new IllegalArgumentException("executableFile must not be null");
+        }
         this.listener = listener;
-        String[] cmd = new String[]{executableFile.getAbsolutePath()};
+        String[] arguments = (extraArguments != null) ? extraArguments : new String[0];
+        String[] cmd = new String[arguments.length + 1];
+        cmd[0] = executableFile.getAbsolutePath();
+        System.arraycopy(arguments, 0, cmd, 1, arguments.length);
         this.process = launcher.launch(cmd, workingDir);
         this.running = true;
 
@@ -113,10 +132,15 @@ public class NativeProcessSupervisor {
      * @throws IOException if the process is not running or stream fails
      */
     public void sendMessage(NativeMessage message) throws IOException {
-        if (process != null && running) {
-            message.writeTo(process.getOutputStream());
-        } else {
-            throw new IOException("Native process is not running");
+        synchronized (this) {
+            if (message == null) {
+                throw new IllegalArgumentException("message must not be null");
+            }
+            if (process != null && running) {
+                message.writeTo(process.getOutputStream());
+            } else {
+                throw new IOException("Native process is not running");
+            }
         }
     }
 

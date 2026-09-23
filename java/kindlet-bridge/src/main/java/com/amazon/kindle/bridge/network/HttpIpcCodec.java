@@ -3,292 +3,293 @@ package com.amazon.kindle.bridge.network;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.util.Vector;
 
 /**
  * Encodes and decodes HttpRequest / HttpResponse objects to/from the
- * KIND IPC binary payload format.
- *
- * Wire format is big-endian; all multi-byte fields are unsigned.
- *
- * Request payload:
- *   u8  schema_version  (always 1)
- *   u8  method_length
- *   u16 url_length
- *   u16 header_count
- *   u32 body_length
- *   bytes method, url, [u16 name_len, u16 val_len, bytes name, bytes val] * N, body
- *
- * Response payload:
- *   u8  schema_version  (always 1)
- *   u16 status_code     (0 = transport error)
- *   u16 reason_length
- *   u16 header_count
- *   u32 body_length
- *   bytes reason, [u16 name_len, u16 val_len, bytes name, bytes val] * N, body
- *
- * Compatible with Java 1.4 / CDC 1.1.
+ * KIND IPC binary payload format. Compatible with Java 1.4 / CDC 1.1.
  */
 public final class HttpIpcCodec {
 
     private static final byte SCHEMA_VERSION = 1;
-    private static final int  MAX_PAYLOAD    = 1024 * 1024;
+    private static final int MAX_PAYLOAD = 1024 * 1024;
 
-    private HttpIpcCodec() {}
+    private HttpIpcCodec() {
+    }
 
-    // -------------------------------------------------------------------------
-    // Encoding
-    // -------------------------------------------------------------------------
-
-    /**
-     * Encodes an HttpRequest into a KIND IPC payload byte array.
-     *
-     * @param req request to encode
-     * @return encoded bytes, or null if the request exceeds protocol limits
-     * @throws IllegalArgumentException if method exceeds 255 bytes or url exceeds 65535 bytes
-     */
-    public static byte[] encodeRequest(HttpRequest req) {
-        byte[] methodBytes = toUtf8(req.getMethod());
-        byte[] urlBytes    = toUtf8(req.getUrl());
+    public static byte[] encodeRequest(HttpRequest request) {
+        byte[] methodBytes = toUtf8(request.getMethod());
+        byte[] urlBytes = toUtf8(request.getUrl());
         if (methodBytes.length > 255) {
             throw new IllegalArgumentException("HTTP method exceeds 255 bytes");
         }
         if (urlBytes.length > 65535) {
             throw new IllegalArgumentException("HTTP url exceeds 65535 bytes");
         }
-        Vector headers = req.getHeaders();
+
+        Vector headers = request.getHeaders();
+        byte[] body = request.getBody();
         if (headers.size() > 65535) {
             throw new IllegalArgumentException("Header count exceeds 65535");
         }
+        if (body.length > MAX_PAYLOAD) {
+            throw new IllegalArgumentException("HTTP body exceeds 1 MiB");
+        }
 
         try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            DataOutputStream dos = new DataOutputStream(baos);
-
-            // Fixed header (10 bytes)
-            dos.writeByte(SCHEMA_VERSION);
-            dos.writeByte(methodBytes.length);
-            dos.writeShort(urlBytes.length);
-            dos.writeShort(headers.size());
-            dos.writeInt(req.getBody().length);
-
-            // Variable fields
-            dos.write(methodBytes);
-            dos.write(urlBytes);
-            for (int i = 0; i < headers.size(); i++) {
-                String[] pair = (String[]) headers.elementAt(i);
-                byte[] nameBytes  = toUtf8(pair[0]);
-                byte[] valueBytes = toUtf8(pair[1]);
-                dos.writeShort(nameBytes.length);
-                dos.writeShort(valueBytes.length);
-                dos.write(nameBytes);
-                dos.write(valueBytes);
-            }
-            if (req.getBody().length > 0) {
-                dos.write(req.getBody());
-            }
-            dos.flush();
-
-            byte[] result = baos.toByteArray();
-            if (result.length > MAX_PAYLOAD) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            DataOutputStream output = new DataOutputStream(bytes);
+            output.writeByte(SCHEMA_VERSION);
+            output.writeByte(methodBytes.length);
+            output.writeShort(urlBytes.length);
+            output.writeShort(headers.size());
+            output.writeInt(body.length);
+            output.write(methodBytes);
+            output.write(urlBytes);
+            if (!writeHeaders(output, headers, true)) {
                 return null;
             }
-            return result;
-        } catch (IOException e) {
+            output.write(body);
+            output.flush();
+
+            byte[] result = bytes.toByteArray();
+            return result.length <= MAX_PAYLOAD ? result : null;
+        } catch (IOException error) {
             return null;
         }
     }
 
-    /**
-     * Encodes an HttpResponse into a KIND IPC payload byte array.
-     *
-     * @param resp response to encode
-     * @return encoded bytes, or null if the response exceeds protocol limits
-     */
-    public static byte[] encodeResponse(HttpResponse resp) {
-        byte[] reasonBytes = toUtf8(resp.getReason());
+    public static byte[] encodeResponse(HttpResponse response) {
+        String reason = response.getReason();
+        if (response.getStatusCode() == 0 && reason.length() == 0) {
+            reason = response.getError();
+        }
+        byte[] reasonBytes = toUtf8(reason);
         if (reasonBytes.length > 65535) {
             return null;
         }
-        Vector headers = resp.getHeaders();
-        if (headers.size() > 65535) {
+
+        Vector headers = response.getHeaders();
+        byte[] body = response.getBody();
+        if (headers.size() > 65535 || body.length > MAX_PAYLOAD) {
             return null;
         }
 
         try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            DataOutputStream dos = new DataOutputStream(baos);
-
-            // Fixed header (11 bytes)
-            dos.writeByte(SCHEMA_VERSION);
-            dos.writeShort(resp.getStatusCode());
-            dos.writeShort(reasonBytes.length);
-            dos.writeShort(headers.size());
-            dos.writeInt(resp.getBody().length);
-
-            // Variable fields
-            dos.write(reasonBytes);
-            for (int i = 0; i < headers.size(); i++) {
-                String[] pair = (String[]) headers.elementAt(i);
-                byte[] nameBytes  = toUtf8(pair[0]);
-                byte[] valueBytes = toUtf8(pair[1]);
-                dos.writeShort(nameBytes.length);
-                dos.writeShort(valueBytes.length);
-                dos.write(nameBytes);
-                dos.write(valueBytes);
-            }
-            if (resp.getBody().length > 0) {
-                dos.write(resp.getBody());
-            }
-            dos.flush();
-
-            byte[] result = baos.toByteArray();
-            if (result.length > MAX_PAYLOAD) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            DataOutputStream output = new DataOutputStream(bytes);
+            output.writeByte(SCHEMA_VERSION);
+            output.writeShort(response.getStatusCode());
+            output.writeShort(reasonBytes.length);
+            output.writeShort(headers.size());
+            output.writeInt(body.length);
+            output.write(reasonBytes);
+            if (!writeHeaders(output, headers, false)) {
                 return null;
             }
-            return result;
-        } catch (IOException e) {
+            output.write(body);
+            output.flush();
+
+            byte[] result = bytes.toByteArray();
+            return result.length <= MAX_PAYLOAD ? result : null;
+        } catch (IOException error) {
+            return null;
+        } catch (IllegalArgumentException error) {
             return null;
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Decoding
-    // -------------------------------------------------------------------------
+    private static boolean writeHeaders(DataOutputStream output, Vector headers,
+                                        boolean throwOnInvalid) throws IOException {
+        for (int index = 0; index < headers.size(); index++) {
+            Object rawPair = headers.elementAt(index);
+            if (!(rawPair instanceof String[])) {
+                if (throwOnInvalid) {
+                    throw new IllegalArgumentException("Header must be a String[2]");
+                }
+                return false;
+            }
+            String[] pair = (String[]) rawPair;
+            if (pair.length != 2 || pair[0] == null || pair[1] == null) {
+                if (throwOnInvalid) {
+                    throw new IllegalArgumentException("Header must contain name and value");
+                }
+                return false;
+            }
+            byte[] name = toUtf8(pair[0]);
+            byte[] value = toUtf8(pair[1]);
+            if (name.length > 65535 || value.length > 65535) {
+                if (throwOnInvalid) {
+                    throw new IllegalArgumentException("Header name or value exceeds 65535 bytes");
+                }
+                return false;
+            }
+            output.writeShort(name.length);
+            output.writeShort(value.length);
+            output.write(name);
+            output.write(value);
+        }
+        return true;
+    }
 
-    /**
-     * Decodes a KIND IPC payload into an HttpRequest.
-     *
-     * @param payload raw payload bytes
-     * @return decoded HttpRequest, or null if the payload is malformed
-     */
     public static HttpRequest decodeRequest(byte[] payload) {
-        if (payload == null || payload.length < 10) {
+        if (payload == null || payload.length < 10 || payload.length > MAX_PAYLOAD) {
             return null;
         }
         int pos = 0;
-        int schema = payload[pos++] & 0xFF;
-        if (schema != (SCHEMA_VERSION & 0xFF)) {
+        if ((payload[pos++] & 0xFF) != (SCHEMA_VERSION & 0xFF)) {
             return null;
         }
-        int methodLen   = payload[pos++] & 0xFF;
-        int urlLen      = readU16(payload, pos); pos += 2;
-        int headerCount = readU16(payload, pos); pos += 2;
-        long bodyLen    = readU32(payload, pos); pos += 4;
-
-        if (bodyLen < 0 || bodyLen > MAX_PAYLOAD) {
+        int methodLength = payload[pos++] & 0xFF;
+        int urlLength = readU16(payload, pos);
+        pos += 2;
+        int headerCount = readU16(payload, pos);
+        pos += 2;
+        long bodyLength = readU32(payload, pos);
+        pos += 4;
+        if (methodLength == 0 || urlLength == 0 || bodyLength > MAX_PAYLOAD) {
             return null;
         }
 
-        if (pos + methodLen > payload.length) return null;
-        String method = new String(payload, pos, methodLen);
-        pos += methodLen;
-
-        if (pos + urlLen > payload.length) return null;
-        String url = new String(payload, pos, urlLen);
-        pos += urlLen;
-
-        Vector headers = new Vector();
-        for (int i = 0; i < headerCount; i++) {
-            if (pos + 4 > payload.length) return null;
-            int nameLen  = readU16(payload, pos); pos += 2;
-            int valueLen = readU16(payload, pos); pos += 2;
-            if (pos + nameLen > payload.length) return null;
-            String name = new String(payload, pos, nameLen);
-            pos += nameLen;
-            if (pos + valueLen > payload.length) return null;
-            String value = new String(payload, pos, valueLen);
-            pos += valueLen;
-            headers.addElement(new String[]{name, value});
+        String method = readUtf8(payload, pos, methodLength);
+        if (method == null) {
+            return null;
         }
+        pos += methodLength;
+        String url = readUtf8(payload, pos, urlLength);
+        if (url == null) {
+            return null;
+        }
+        pos += urlLength;
 
-        int blen = (int) bodyLen;
-        if (pos + blen > payload.length) return null;
-        byte[] body = new byte[blen];
-        System.arraycopy(payload, pos, body, 0, blen);
-        pos += blen;
+        int[] headerPosition = new int[]{pos};
+        Vector headers = readHeaders(payload, headerCount, headerPosition);
+        if (headers == null) {
+            return null;
+        }
+        pos = headerPosition[0];
 
-        if (pos != payload.length) return null;
-
+        int bodySize = (int) bodyLength;
+        if (!hasRoom(payload, pos, bodySize)) {
+            return null;
+        }
+        byte[] body = new byte[bodySize];
+        System.arraycopy(payload, pos, body, 0, bodySize);
+        pos += bodySize;
+        if (pos != payload.length) {
+            return null;
+        }
         return new HttpRequest(method, url, headers, body);
     }
 
-    /**
-     * Decodes a KIND IPC payload into an HttpResponse.
-     *
-     * @param payload raw payload bytes
-     * @return decoded HttpResponse, or null if the payload is malformed
-     */
     public static HttpResponse decodeResponse(byte[] payload) {
-        if (payload == null || payload.length < 11) {
+        if (payload == null || payload.length < 11 || payload.length > MAX_PAYLOAD) {
             return null;
         }
         int pos = 0;
-        int schema = payload[pos++] & 0xFF;
-        if (schema != (SCHEMA_VERSION & 0xFF)) {
+        if ((payload[pos++] & 0xFF) != (SCHEMA_VERSION & 0xFF)) {
             return null;
         }
-        int statusCode  = readU16(payload, pos); pos += 2;
-        int reasonLen   = readU16(payload, pos); pos += 2;
-        int headerCount = readU16(payload, pos); pos += 2;
-        long bodyLen    = readU32(payload, pos); pos += 4;
-
-        if (bodyLen < 0 || bodyLen > MAX_PAYLOAD) {
+        int statusCode = readU16(payload, pos);
+        pos += 2;
+        int reasonLength = readU16(payload, pos);
+        pos += 2;
+        int headerCount = readU16(payload, pos);
+        pos += 2;
+        long bodyLength = readU32(payload, pos);
+        pos += 4;
+        if (bodyLength > MAX_PAYLOAD) {
             return null;
         }
 
-        if (pos + reasonLen > payload.length) return null;
-        String reason = new String(payload, pos, reasonLen);
-        pos += reasonLen;
-
-        Vector headers = new Vector();
-        for (int i = 0; i < headerCount; i++) {
-            if (pos + 4 > payload.length) return null;
-            int nameLen  = readU16(payload, pos); pos += 2;
-            int valueLen = readU16(payload, pos); pos += 2;
-            if (pos + nameLen > payload.length) return null;
-            String name = new String(payload, pos, nameLen);
-            pos += nameLen;
-            if (pos + valueLen > payload.length) return null;
-            String value = new String(payload, pos, valueLen);
-            pos += valueLen;
-            headers.addElement(new String[]{name, value});
+        String reason = readUtf8(payload, pos, reasonLength);
+        if (reason == null) {
+            return null;
         }
+        pos += reasonLength;
+        int[] headerPosition = new int[]{pos};
+        Vector headers = readHeaders(payload, headerCount, headerPosition);
+        if (headers == null) {
+            return null;
+        }
+        pos = headerPosition[0];
 
-        int blen = (int) bodyLen;
-        if (pos + blen > payload.length) return null;
-        byte[] body = new byte[blen];
-        System.arraycopy(payload, pos, body, 0, blen);
-        pos += blen;
-
-        if (pos != payload.length) return null;
-
+        int bodySize = (int) bodyLength;
+        if (!hasRoom(payload, pos, bodySize)) {
+            return null;
+        }
+        byte[] body = new byte[bodySize];
+        System.arraycopy(payload, pos, body, 0, bodySize);
+        pos += bodySize;
+        if (pos != payload.length) {
+            return null;
+        }
         return new HttpResponse(statusCode, reason, headers, body);
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    private static int readU16(byte[] buf, int off) {
-        return ((buf[off] & 0xFF) << 8) | (buf[off + 1] & 0xFF);
+    private static Vector readHeaders(byte[] payload, int headerCount, int[] position) {
+        Vector headers = new Vector();
+        int pos = position[0];
+        for (int index = 0; index < headerCount; index++) {
+            if (!hasRoom(payload, pos, 4)) {
+                return null;
+            }
+            int nameLength = readU16(payload, pos);
+            pos += 2;
+            int valueLength = readU16(payload, pos);
+            pos += 2;
+            String name = readUtf8(payload, pos, nameLength);
+            if (name == null) {
+                return null;
+            }
+            pos += nameLength;
+            String value = readUtf8(payload, pos, valueLength);
+            if (value == null) {
+                return null;
+            }
+            pos += valueLength;
+            headers.addElement(new String[]{name, value});
+        }
+        position[0] = pos;
+        return headers;
     }
 
-    private static long readU32(byte[] buf, int off) {
-        return ((long) (buf[off]     & 0xFF) << 24)
-             | ((long) (buf[off + 1] & 0xFF) << 16)
-             | ((long) (buf[off + 2] & 0xFF) <<  8)
-             | ((long) (buf[off + 3] & 0xFF));
+    private static boolean hasRoom(byte[] buffer, int position, int length) {
+        return position >= 0 && length >= 0 && position <= buffer.length &&
+               length <= buffer.length - position;
     }
 
-    private static byte[] toUtf8(String s) {
-        if (s == null || s.length() == 0) {
+    private static String readUtf8(byte[] buffer, int position, int length) {
+        if (!hasRoom(buffer, position, length)) {
+            return null;
+        }
+        try {
+            return new String(buffer, position, length, "UTF-8");
+        } catch (UnsupportedEncodingException error) {
+            return null;
+        }
+    }
+
+    private static int readU16(byte[] buffer, int offset) {
+        return ((buffer[offset] & 0xFF) << 8) | (buffer[offset + 1] & 0xFF);
+    }
+
+    private static long readU32(byte[] buffer, int offset) {
+        return ((long) (buffer[offset] & 0xFF) << 24)
+             | ((long) (buffer[offset + 1] & 0xFF) << 16)
+             | ((long) (buffer[offset + 2] & 0xFF) << 8)
+             | ((long) (buffer[offset + 3] & 0xFF));
+    }
+
+    private static byte[] toUtf8(String value) {
+        if (value == null || value.length() == 0) {
             return new byte[0];
         }
         try {
-            return s.getBytes("UTF-8");
-        } catch (java.io.UnsupportedEncodingException e) {
-            return s.getBytes();
+            return value.getBytes("UTF-8");
+        } catch (UnsupportedEncodingException error) {
+            return new byte[0];
         }
     }
 }

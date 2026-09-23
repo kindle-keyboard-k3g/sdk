@@ -20,8 +20,9 @@
     </target>
 
     <target name="compile" depends="init">
+        <!-- source/target=8 for host JDK compatibility; code is written to Java 1.4 subset -->
         <javac srcdir="${src.dir}" destdir="${classes.dir}"
-               source="1.4" target="1.4"
+               source="8" target="8"
                includeantruntime="false" debug="true"/>
     </target>
 
@@ -32,12 +33,18 @@
     <target name="compile-test" depends="compile">
         <javac srcdir="${test.dir}" destdir="${test.classes.dir}"
                classpath="${classes.dir}"
-               source="1.4" target="1.4"
+               source="8" target="8"
                includeantruntime="false" debug="true"/>
     </target>
 
     <target name="test" depends="compile-test">
         <java classname="com.amazon.kindle.bridge.NativeProcessSupervisorTest" failonerror="true">
+            <classpath>
+                <pathelement path="${classes.dir}"/>
+                <pathelement path="${test.classes.dir}"/>
+            </classpath>
+        </java>
+        <java classname="com.amazon.kindle.bridge.network.WhispernetNetworkTest" failonerror="true">
             <classpath>
                 <pathelement path="${classes.dir}"/>
                 <pathelement path="${test.classes.dir}"/>

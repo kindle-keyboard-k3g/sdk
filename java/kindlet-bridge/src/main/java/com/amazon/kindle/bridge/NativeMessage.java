@@ -21,6 +21,10 @@ public class NativeMessage {
     public static final byte TYPE_PING = 0x01;
     /** Pong response message type. */
     public static final byte TYPE_PONG = 0x02;
+    /** Whispernet proxy HTTP request type. */
+    public static final byte TYPE_HTTP_REQUEST  = 0x06;
+    /** Whispernet proxy HTTP response type. */
+    public static final byte TYPE_HTTP_RESPONSE = 0x07;
     /** Command execution request type. */
     public static final byte TYPE_COMMAND = 0x10;
     /** Command response result type. */

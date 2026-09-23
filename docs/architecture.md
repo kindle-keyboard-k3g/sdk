@@ -33,3 +33,41 @@ Legacy Kindle devices drive the display controller through the Linux framebuffer
 - Legacy Area IOCTL: `FBIO_EINK_UPDATE_DISPLAY_AREA` (0x46dd)
 - Screen Clear IOCTL: `FBIO_EINK_CLEAR_SCREEN` (0x46e1)
 - ProcFS update trigger: `/proc/eink_fb/update_display` (e.g., `echo 1 > /proc/eink_fb/update_display`)
+
+## Network Subsystem
+
+The networking stack keeps Java kindlets and native processes independent while
+providing an optional IPC relay when a kindlet delegates HTTP work to its native
+daemon.
+
+```text
+Kindlet Java application
+        |
+        +-- WhispernetHttpClient (HTTP through proxy)
+        +-- WhispernetSocketClient (CONNECT tunnel)
+        +-- NetworkRelayHandler (optional Java -> native IPC)
+                                      |
+Native C++ daemon                      |
+        +-- kindle::network::HttpClient <+-- TYPE_HTTP_REQUEST/RESPONSE
+        |       +-- POSIX HTTP over proxy
+        +-- kindle::network::TcpConnection
+                +-- POSIX CONNECT tunnel
+                                      |
+              Device-local Whispernet proxy
+                                      |
+                              Whispernet 3G network
+```
+
+- `WhispernetProxy` loads the Java proxy endpoint from system properties; the
+  native `ProxyConfig` loads its endpoint from environment variables or daemon
+  command-line arguments.
+- `WhispernetHttpClient` parses bounded HTTP responses, including content-length,
+  chunked, and close-delimited bodies, while rejecting unsupported HTTPS rather
+  than sending plaintext.
+- `WhispernetSocketClient` and `kindle::network::TcpConnection` establish raw
+  TCP streams through an HTTP CONNECT proxy.
+- `HttpIpcCodec` mirrors the binary request/response payload format on both
+  platforms, and `kindle_daemon` dispatches native requests safely.
+- `NetworkRelayHandler` is optional. It sends Java requests as framed
+  `TYPE_HTTP_REQUEST` messages, correlates `TYPE_HTTP_RESPONSE` replies, and
+  forwards unrelated native messages to the application listener.

@@ -9,7 +9,9 @@ Kindlets run inside the Sun CVM on Kindle devices and are validated against keys
 To grant active content appropriate system permissions on jailbroken/developer devices, the JAR file must be sequentially signed with three certificate alias roles:
 1. `dk*` (General Kindlet Developer signature): Basic application sandbox privileges.
 2. `di*` (Device Interaction signature): Grants permission to interact with low-level device components, orientation, screen refresh, and audio.
-3. `dn*` (Developer Network signature): Grants network connectivity (WiFi / 3G Whispernet).
+3. `dn*` (Developer Network signature): Grants network connectivity (WiFi / 3G Whispernet). **Required for any kindlet that uses `WhispernetHttpClient`, `WhispernetSocketClient`, or the `kindle::network` C++ API.** Without this signature the CVM denies all socket connections on the device.
+
+> **Note for Whispernet / 3G kindlets:** After signing, configure the Java client with the `kindle.whispernet.proxy.host` and `kindle.whispernet.proxy.port` system properties. The native daemon uses `KINDLE_WHISPERNET_PROXY_HOST` and `KINDLE_WHISPERNET_PROXY_PORT` environment variables or its proxy CLI flags. These values are never hardcoded. See [`docs/network-guide.md`](network-guide.md) for full configuration details.
 
 ### Signature Algorithms:
 - **Kindle Keyboard (Firmware 3.4.3+):** RSA-2048 with `SHA256withRSA` signature algorithm (`.RSA` signature block).

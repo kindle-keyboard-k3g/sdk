@@ -21,6 +21,8 @@ constexpr uint32_t MAX_PAYLOAD_SIZE = 1024 * 1024;
 enum class MessageType : uint8_t {
     Ping = 0x01,         ///< Health check ping from supervisor
     Pong = 0x02,         ///< Response to ping
+    HttpRequest  = 0x06, ///< Proxy HTTP request (Whispernet relay)
+    HttpResponse = 0x07, ///< Proxy HTTP response (Whispernet relay)
     Command = 0x10,      ///< Request/command carrying action payload
     Response = 0x11,     ///< Reply to command with status and results
     Notification = 0x20, ///< Asynchronous unsolicited event notification

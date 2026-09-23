@@ -90,39 +90,48 @@ public class NativeProcessSupervisor {
         if (executableFile == null) {
             throw new IllegalArgumentException("executableFile must not be null");
         }
-        this.listener = listener;
-        String[] arguments = (extraArguments != null) ? extraArguments : new String[0];
-        String[] cmd = new String[arguments.length + 1];
-        cmd[0] = executableFile.getAbsolutePath();
-        System.arraycopy(arguments, 0, cmd, 1, arguments.length);
-        this.process = launcher.launch(cmd, workingDir);
-        this.running = true;
+        synchronized (this) {
+            this.listener = listener;
+            String[] arguments = (extraArguments != null) ? extraArguments : new String[0];
+            String[] cmd = new String[arguments.length + 1];
+            cmd[0] = executableFile.getAbsolutePath();
+            System.arraycopy(arguments, 0, cmd, 1, arguments.length);
+            this.process = launcher.launch(cmd, workingDir);
+            this.running = true;
+            final Process processForReader = this.process;
 
-        this.readerThread = new Thread(new Runnable() {
-            public void run() {
-                InputStream in = process.getInputStream();
-                while (running) {
-                    try {
-                        NativeMessage msg = NativeMessage.readFrom(in);
-                        if (NativeProcessSupervisor.this.listener != null) {
-                            NativeProcessSupervisor.this.listener.onMessageReceived(msg);
+            this.readerThread = new Thread(new Runnable() {
+                public void run() {
+                    InputStream in = processForReader.getInputStream();
+                    while (running) {
+                        try {
+                            NativeMessage msg = NativeMessage.readFrom(in);
+                            if (NativeProcessSupervisor.this.listener != null) {
+                                NativeProcessSupervisor.this.listener.onMessageReceived(msg);
+                            }
+                        } catch (IOException e) {
+                            break;
                         }
-                    } catch (IOException e) {
-                        break;
                     }
-                }
-                if (NativeProcessSupervisor.this.listener != null) {
+
+                    int exitCode = -1;
                     try {
-                        int exitCode = process.waitFor();
-                        NativeProcessSupervisor.this.listener.onProcessTerminated(exitCode);
+                        exitCode = processForReader.waitFor();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
+                        try {
+                            exitCode = processForReader.exitValue();
+                        } catch (IllegalThreadStateException ignored) {
+                        }
+                    }
+                    if (NativeProcessSupervisor.this.listener != null) {
+                        NativeProcessSupervisor.this.listener.onProcessTerminated(exitCode);
                     }
                 }
-            }
-        });
-        this.readerThread.setDaemon(true);
-        this.readerThread.start();
+            });
+            this.readerThread.setDaemon(true);
+            this.readerThread.start();
+        }
     }
 
     /**

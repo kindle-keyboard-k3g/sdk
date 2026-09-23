@@ -427,9 +427,11 @@ struct ResponseReader {
                 ++digit_count;
             }
             if (digit_count == 0) return false;
-            for (size_t index = digit_count; index < size_line.size(); ++index) {
-                if (!std::isspace(static_cast<unsigned char>(size_line[index])))
-                    return false;
+            if (digit_count >= size_line.size() || size_line[digit_count] != ';') {
+                for (size_t index = digit_count; index < size_line.size(); ++index) {
+                    if (!std::isspace(static_cast<unsigned char>(size_line[index])))
+                        return false;
+                }
             }
 
             size_t chunk_size = 0;

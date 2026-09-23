@@ -53,9 +53,9 @@ static std::string chunked_response(const std::string& body) {
     std::string c1 = body.substr(0, half);
     std::string c2 = body.substr(half);
     std::string resp = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
-    // chunk 1
+    // chunk 1, including an extension that must be ignored
     char buf[32];
-    snprintf(buf, sizeof(buf), "%zx\r\n", c1.size());
+    snprintf(buf, sizeof(buf), "%zx;ext=val\r\n", c1.size());
     resp += buf + c1 + "\r\n";
     // chunk 2
     snprintf(buf, sizeof(buf), "%zx\r\n", c2.size());

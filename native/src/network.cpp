@@ -1,6 +1,7 @@
 #include "kindle/network.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <charconv>
 #include <cstdlib>
@@ -42,6 +43,12 @@ bool iequal(const std::string& a, const std::string& b) {
             return false;
     }
     return true;
+}
+
+bool contains_forbidden_request_character(const std::string& value) {
+    return value.find('\r') != std::string::npos ||
+           value.find('\n') != std::string::npos ||
+           value.find('\0') != std::string::npos;
 }
 
 /** Trim leading and trailing whitespace from a string view in-place. */
@@ -243,6 +250,7 @@ bool TcpConnection::read_line(std::string& line, size_t max_len) {
 
 bool TcpConnection::connect_tunnel(const std::string& host, uint16_t port) {
     close();
+    if (contains_forbidden_request_character(host)) return false;
 
     if (!proxy_.is_configured()) {
         // No proxy: direct TCP to target
@@ -367,6 +375,22 @@ struct ResponseReader {
         return true;
     }
 
+    bool read_crlf_line(std::string& line, size_t max_len) {
+        line.clear();
+        uint8_t ch = 0;
+        while (true) {
+            if (!read_byte(ch)) return false;
+            if (ch == '\r') {
+                uint8_t next = 0;
+                if (!read_byte(next) || next != '\n') return false;
+                return true;
+            }
+            if (ch == '\n') return false;
+            if (line.size() >= max_len) return false;
+            line.push_back(static_cast<char>(ch));
+        }
+    }
+
     // Read until connection close
     bool read_until_eof(std::vector<uint8_t>& out) {
         uint8_t tmp[4096];
@@ -374,8 +398,9 @@ struct ResponseReader {
             const int64_t n = backend->receive(fd, tmp, sizeof(tmp));
             if (n == 0) break; // EOF
             if (n < 0) return false;
-            if (out.size() + static_cast<size_t>(n) > BODY_LIMIT) return false;
-            out.insert(out.end(), tmp, tmp + n);
+            const size_t received = static_cast<size_t>(n);
+            if (received > BODY_LIMIT - out.size()) return false;
+            out.insert(out.end(), tmp, tmp + received);
         }
         return true;
     }
@@ -384,34 +409,50 @@ struct ResponseReader {
     bool read_chunked(std::vector<uint8_t>& out) {
         while (true) {
             std::string size_line;
-            if (!read_line(size_line, 128)) return false;
-            // Trim chunk extensions (;...)
-            const auto semi = size_line.find(';');
-            if (semi != std::string::npos) size_line.resize(semi);
+            if (!read_crlf_line(size_line, 128)) return false;
             size_line = trim(size_line);
             if (size_line.empty()) return false;
 
-            // Parse hex chunk size
-            unsigned long chunk_size = 0;
-            try {
-                chunk_size = std::stoul(size_line, nullptr, 16);
-            } catch (...) { return false; }
-
-            if (chunk_size == 0) {
-                // Last chunk — drain trailers
-                std::string trailer;
-                while (read_line(trailer, MAX_HEADER_LINE) && !trailer.empty()) {}
-                break;
+            size_t digit_count = 0;
+            while (digit_count < size_line.size()) {
+                const unsigned char digit =
+                    static_cast<unsigned char>(size_line[digit_count]);
+                if (!std::isxdigit(digit)) break;
+                ++digit_count;
+            }
+            if (digit_count == 0) return false;
+            for (size_t index = digit_count; index < size_line.size(); ++index) {
+                if (!std::isspace(static_cast<unsigned char>(size_line[index])))
+                    return false;
             }
 
-            if (out.size() + chunk_size > BODY_LIMIT) return false;
+            size_t chunk_size = 0;
+            for (size_t index = 0; index < digit_count; ++index) {
+                const unsigned char digit =
+                    static_cast<unsigned char>(size_line[index]);
+                const size_t value = std::isdigit(digit)
+                    ? static_cast<size_t>(digit - '0')
+                    : static_cast<size_t>(std::tolower(digit) - 'a' + 10);
+                if (chunk_size > (BODY_LIMIT - value) / 16u) return false;
+                chunk_size = chunk_size * 16u + value;
+            }
+
+            if (chunk_size == 0) {
+                std::string trailer;
+                while (true) {
+                    if (!read_crlf_line(trailer, MAX_HEADER_LINE)) return false;
+                    if (trailer.empty()) return true;
+                }
+            }
+
+            if (chunk_size > BODY_LIMIT - out.size()) return false;
             if (!read_exact(out, chunk_size)) return false;
 
-            // Consume trailing CRLF after chunk data
-            std::string crlf;
-            if (!read_line(crlf, 4)) return false;
+            uint8_t first = 0;
+            uint8_t second = 0;
+            if (!read_byte(first) || !read_byte(second) ||
+                first != '\r' || second != '\n') return false;
         }
-        return true;
     }
 };
 
@@ -422,17 +463,26 @@ HttpResponse build_error(const std::string& msg) {
 HttpResponse do_execute(const HttpRequest& request,
                         const ProxyConfig& proxy,
                         detail::SocketBackend* backend_ptr) {
-    // Validate and parse URL
+    // Validate all request fields before any socket operation.
     if (request.method.empty()) return build_error("empty method");
+    if (contains_forbidden_request_character(request.method))
+        return build_error("invalid method: contains CRLF or NUL");
+    if (contains_forbidden_request_character(request.url))
+        return build_error("invalid URL: contains CRLF or NUL");
+    for (const auto& header : request.headers) {
+        if (contains_forbidden_request_character(header.first) ||
+            contains_forbidden_request_character(header.second))
+            return build_error("invalid header: contains CRLF or NUL");
+    }
+
     const ParsedUrl purl = parse_url(request.url);
-    if (!purl.valid)   return build_error("invalid URL: " + request.url);
+    if (!purl.valid) return build_error("invalid URL: " + request.url);
 
     // HTTPS guard — never send plaintext
     if (purl.scheme == "https") {
         return build_error("TLS backend not available");
     }
 
-    // Connect
     const bool use_proxy = proxy.is_configured();
     const std::string& connect_host = use_proxy ? proxy.host : purl.host;
     const uint16_t     connect_port = use_proxy ? proxy.port : purl.port;

@@ -6,7 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(include)
 
-option(KINDLE_NETWORK_WITH_OPENSSL "Build TLS support via OpenSSL (requires libssl-dev)" OFF)
+# Placeholder option: OpenSSL is linkable, but native HTTPS/TLS is not implemented yet.
+option(KINDLE_NETWORK_WITH_OPENSSL "Stub placeholder for future TLS support; does not implement TLS yet" OFF)
 
 add_library(kindle_native STATIC
     src/ipc.cpp

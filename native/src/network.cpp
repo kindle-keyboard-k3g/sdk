@@ -95,7 +95,8 @@ ParsedUrl parse_url(const std::string& url) {
         int        p        = 0;
         auto [ptr, ec]      = std::from_chars(
             port_str.data(), port_str.data() + port_str.size(), p);
-        if (ec != std::errc{} || p < 1 || p > 65535) return r;
+        if (ec != std::errc{} || ptr != port_str.data() + port_str.size() ||
+            p < 1 || p > 65535) return r;
         r.port = static_cast<uint16_t>(p);
     }
 
@@ -205,7 +206,8 @@ ProxyConfig ProxyConfig::from_environment() {
     const std::string port_str(p);
     auto [ptr, ec] = std::from_chars(
         port_str.data(), port_str.data() + port_str.size(), port_val);
-    if (ec != std::errc{} || port_val < 1 || port_val > 65535)
+    if (ec != std::errc{} || ptr != port_str.data() + port_str.size() ||
+        port_val < 1 || port_val > 65535)
         throw std::invalid_argument(
             "KINDLE_WHISPERNET_PROXY_PORT must be an integer in 1-65535");
 
@@ -290,7 +292,11 @@ bool TcpConnection::connect_tunnel(const std::string& host, uint16_t port) {
     int code = 0;
     auto [ptr, ec] = std::from_chars(
         code_str.data(), code_str.data() + code_str.size(), code);
-    if (ec != std::errc{} || code != 200) { close(); return false; }
+    if (ec != std::errc{} || ptr != code_str.data() + code_str.size() ||
+        code != 200) {
+        close();
+        return false;
+    }
 
     // Drain remaining proxy headers
     size_t header_count = 0;
@@ -568,7 +574,8 @@ HttpResponse do_execute(const HttpRequest& request,
     {
         auto [ptr, ec] = std::from_chars(
             code_str.data(), code_str.data() + code_str.size(), status);
-        if (ec != std::errc{} || status < 100 || status > 999)
+        if (ec != std::errc{} || ptr != code_str.data() + code_str.size() ||
+            status < 100 || status > 999)
             return build_error("invalid status code: " + code_str);
     }
     const std::string reason =
@@ -610,7 +617,7 @@ HttpResponse do_execute(const HttpRequest& request,
             {
                 auto [ptr, ec] = std::from_chars(
                     cl.data(), cl.data() + cl.size(), content_len);
-                if (ec != std::errc{})
+                if (ec != std::errc{} || ptr != cl.data() + cl.size())
                     return build_error("invalid Content-Length: " + cl);
             }
             if (content_len > BODY_LIMIT)

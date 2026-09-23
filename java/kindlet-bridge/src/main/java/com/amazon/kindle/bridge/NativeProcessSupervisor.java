@@ -148,15 +148,22 @@ public class NativeProcessSupervisor {
      * Gracefully stops the child process by transmitting a shutdown frame, then destroying the process.
      */
     public void stop() {
-        this.running = false;
-        if (process != null) {
-            try {
-                NativeMessage shutdownMsg = new NativeMessage(NativeMessage.TYPE_SHUTDOWN, 0, new byte[0]);
-                sendMessage(shutdownMsg);
-            } catch (Exception ignored) {
+        synchronized (this) {
+            if (process != null) {
+                try {
+                    NativeMessage shutdownMsg = new NativeMessage(
+                        NativeMessage.TYPE_SHUTDOWN, 0, new byte[0]);
+                    if (running) {
+                        sendMessage(shutdownMsg);
+                    }
+                } catch (Exception ignored) {
+                }
+                running = false;
+                process.destroy();
+                process = null;
+            } else {
+                running = false;
             }
-            process.destroy();
-            process = null;
         }
     }
 }

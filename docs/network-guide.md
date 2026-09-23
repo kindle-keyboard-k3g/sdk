@@ -27,14 +27,23 @@ Both layers speak directly to the Whispernet proxy. The IPC relay (`NetworkRelay
 
 ## Environment Variables
 
-The proxy address is **never hardcoded**. Both the Java and C++ layers read it from:
+The proxy address is **never hardcoded**. The native C++ daemon reads:
 
-| Variable | Description |
+| Environment variable | Description |
 |---|---|
 | `KINDLE_WHISPERNET_PROXY_HOST` | Proxy hostname or IP (e.g. `127.0.0.1`) |
 | `KINDLE_WHISPERNET_PROXY_PORT` | Proxy TCP port (1–65535) |
 
-If `KINDLE_WHISPERNET_PROXY_HOST` is absent, no proxy is configured and direct connections are attempted (useful for WiFi-only testing).
+The Java CDC client reads the equivalent system properties:
+
+| System property | Description |
+|---|---|
+| `kindle.whispernet.proxy.host` | Proxy hostname or IP |
+| `kindle.whispernet.proxy.port` | Proxy TCP port |
+
+`System.getenv()` is a Java 5 API and is not available on CDC/Java 1.4. Use
+`WhispernetProxy.fromSystemProperties()` instead. If the C++ environment variables
+are absent, the daemon starts without a proxy.
 
 ## Java API
 
@@ -46,15 +55,16 @@ import com.amazon.kindle.bridge.network.WhispernetHttpClient;
 import com.amazon.kindle.bridge.network.WhispernetSocketClient;
 import com.amazon.kindle.bridge.network.HttpRequest;
 import com.amazon.kindle.bridge.network.HttpResponse;
+import java.util.Vector;
 ```
 
 ### HTTP Client
 
 ```java
-WhispernetProxy proxy = WhispernetProxy.fromEnvironment();
-// returns null if unconfigured; throws IllegalArgumentException if HOST set but PORT invalid
+WhispernetProxy proxy = WhispernetProxy.fromSystemProperties();
+// returns null if unconfigured; throws IllegalArgumentException if HOST is set but PORT is invalid
 if (proxy == null) {
-    // WiFi-only path or no network available
+    // No proxy configured or no network available
     return;
 }
 WhispernetHttpClient client = new WhispernetHttpClient(proxy);
@@ -65,8 +75,11 @@ if (resp.isOk()) {
     String body = new String(resp.getBody());
 }
 
-// POST
-HttpResponse post = client.post("http://example.com/api/submit", "data".getBytes());
+// POST (url, headers, body)
+Vector headers = new Vector();
+headers.addElement(new String[]{"Content-Type", "text/plain"});
+HttpResponse post = client.post("http://example.com/api/submit", headers,
+                               "data".getBytes("UTF-8"));
 
 // Custom request
 HttpRequest req = new HttpRequest("PUT", "http://example.com/resource");
@@ -91,30 +104,33 @@ socket.close();
 
 ### IPC Relay (optional)
 
-When your kindlet controls a C++ daemon and you want HTTP to be dispatched by the daemon instead:
+When your kindlet controls a C++ daemon and wants the daemon to perform HTTP:
 
 ```java
-// In the kindlet: wire the relay handler into the supervisor listener
 NativeProcessSupervisor supervisor = ...;
-OutputStream daemonStdin = supervisor.getOutputStream();
-NetworkRelayHandler relay = new NetworkRelayHandler(
-    new WhispernetHttpClient(proxy),
-    daemonStdin,
-    new HttpResponseListener() {
-        public void onHttpResponse(int requestId, HttpResponse response) {
-            // called on completion with the response
+NetworkRelayHandler relay = new NetworkRelayHandler(supervisor,
+    new NativeBridgeListener() {
+        public void onMessageReceived(NativeMessage message) {
+            // Handle non-network frames here.
         }
-    }
-);
+        public void onProcessTerminated(int exitCode) {}
+    });
+supervisor.start(daemonExecutable, relay);
 
-// In the supervisor message callback:
-supervisor.setListener(new NativeBridgeListener() {
-    public void onMessageReceived(NativeMessage msg) {
-        relay.handleMessage(msg);
+HttpRequest request = new HttpRequest("GET", "http://example.com/status");
+relay.sendHttpRequest(request, new HttpResponseListener() {
+    public void onHttpResponse(int requestId, HttpResponse response) {
+        // Called when the native daemon returns TYPE_HTTP_RESPONSE.
     }
-    public void onProcessTerminated(int exitCode) {}
+    public void onHttpError(int requestId, String message) {
+        // Called if the daemon terminates or the frame cannot be decoded.
+    }
 });
 ```
+
+`NetworkRelayHandler` sends `TYPE_HTTP_REQUEST` frames Java → native and
+correlates native `TYPE_HTTP_RESPONSE` frames by request ID. It does not execute
+HTTP requests in Java.
 
 ## C++ API
 
@@ -155,7 +171,7 @@ if (resp.ok()) {
 
 // Convenience methods
 auto get  = client.get("http://example.com/");
-auto post = client.post("http://example.com/submit", payload_bytes);
+auto post = client.post("http://example.com/submit", {}, payload_bytes);
 ```
 
 ### TCP Connection (CONNECT tunnel)
@@ -190,10 +206,14 @@ During development on a desktop machine without a physical Kindle, use `FakeWhis
 
 ```java
 FakeWhispernetProxy fakeProxy = new FakeWhispernetProxy();
-fakeProxy.start();
-// KINDLE_WHISPERNET_PROXY_HOST/PORT system properties now point to 127.0.0.1:N
-// ... run your kindlet ...
-fakeProxy.stop();
+try {
+    fakeProxy.start();
+    fakeProxy.installSystemProperties();
+    // ... run your kindlet against /health, /echo, or /post ...
+} finally {
+    fakeProxy.restoreSystemProperties();
+    fakeProxy.stop();
+}
 ```
 
 Or via the command line:
@@ -202,7 +222,7 @@ Or via the command line:
 java -cp ... com.amazon.kindle.emulator.EmulatorLauncher my.azw2 --fake-proxy --headless
 ```
 
-The fake proxy forwards requests to the real internet via `java.net.URL`.
+The fake proxy is deterministic and local-only. It serves canned `/health`, `/echo`, and `/post` routes and provides a byte-echo `CONNECT` tunnel; it never forwards to the public Internet.
 
 ## Signing Requirements
 

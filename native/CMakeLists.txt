@@ -14,6 +14,12 @@ add_library(kindle_native STATIC
     src/jni_bridge.cpp
     src/network.cpp
     src/network_ipc.cpp
+    src/pixmap.cpp
+    src/dirty.cpp
+    src/frame_differ.cpp
+    src/refresh_policy.cpp
+    src/ghosting.cpp
+    src/bitmap_font.cpp
     platform/fake/fake_procfs.cpp
     platform/fake/fake_eink.cpp
     platform/fake/fake_network.cpp
@@ -50,5 +56,32 @@ add_executable(test_network tests/test_network.cpp)
 target_link_libraries(test_network kindle_native)
 add_test(NAME test_network COMMAND test_network)
 
+add_executable(test_pixmap tests/test_pixmap.cpp)
+target_link_libraries(test_pixmap kindle_native)
+add_test(NAME test_pixmap COMMAND test_pixmap)
+
+add_executable(test_dirty tests/test_dirty.cpp)
+target_link_libraries(test_dirty kindle_native)
+add_test(NAME test_dirty COMMAND test_dirty)
+
+add_executable(test_frame_differ tests/test_frame_differ.cpp)
+target_link_libraries(test_frame_differ kindle_native)
+add_test(NAME test_frame_differ COMMAND test_frame_differ)
+
+add_executable(test_refresh_policy tests/test_refresh_policy.cpp)
+target_link_libraries(test_refresh_policy kindle_native)
+add_test(NAME test_refresh_policy COMMAND test_refresh_policy)
+
+add_executable(test_ghosting tests/test_ghosting.cpp)
+target_link_libraries(test_ghosting kindle_native)
+add_test(NAME test_ghosting COMMAND test_ghosting)
+
+add_executable(test_bitmap_font tests/test_bitmap_font.cpp)
+target_link_libraries(test_bitmap_font kindle_native)
+add_test(NAME test_bitmap_font COMMAND test_bitmap_font)
+
 add_executable(kindle_daemon src/kindle_daemon_main.cpp)
 target_link_libraries(kindle_daemon kindle_native)
+
+install(DIRECTORY include/kindle DESTINATION include)
+install(TARGETS kindle_native ARCHIVE DESTINATION lib)

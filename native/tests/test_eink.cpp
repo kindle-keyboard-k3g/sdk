@@ -1,8 +1,8 @@
+// native/tests/test_eink.cpp
 #include "kindle/eink.hpp"
+#include "kindle/fake_eink.hpp"
 #include <cassert>
 #include <iostream>
-
-#include "../platform/fake/fake_eink.cpp"
 
 int main() {
     std::cout << "Running test_eink..." << std::endl;

@@ -22,6 +22,7 @@ add_library(kindle_native STATIC
     src/bitmap_font.cpp
     src/keyboard_translator.cpp
     src/input_debouncer.cpp
+    src/modifier_tracker.cpp
     src/audio.cpp
     src/audio_loader.cpp
     platform/fake/fake_procfs.cpp

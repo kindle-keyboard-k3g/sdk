@@ -1,5 +1,6 @@
 #include "kindle/input.hpp"
 #include "kindle/input_debouncer.hpp"
+#include "kindle/modifier_tracker.hpp"
 #include <cassert>
 #include <iostream>
 
@@ -79,10 +80,62 @@ void test_debouncer_repeat_timing() {
     std::cout << "PASS: test_debouncer_repeat_timing\n";
 }
 
+void test_modifier_tracker_disabled() {
+    std::cout << "Testing ModifierTracker with LatchMode::Disabled...\n";
+    kindle::ModifierTracker tracker(kindle::LatchMode::Disabled);
+
+    assert(!tracker.state().shift);
+    assert(!tracker.state().alt);
+    assert(!tracker.state().ctrl);
+    assert(!tracker.state().sym);
+
+    // Press Shift
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Press);
+    assert(tracker.state().shift);
+    assert(!tracker.is_latched());
+
+    // Release Shift
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Release);
+    assert(!tracker.state().shift);
+    assert(!tracker.is_latched());
+
+    std::cout << "PASS: test_modifier_tracker_disabled\n";
+}
+
+void test_modifier_tracker_sticky_once() {
+    std::cout << "Testing ModifierTracker with LatchMode::StickyOnce...\n";
+    kindle::ModifierTracker tracker(kindle::LatchMode::StickyOnce);
+
+    // Tap and release Shift -> latched
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Press);
+    assert(tracker.state().shift);
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Release);
+    assert(tracker.state().shift); // still true because latched
+    assert(tracker.is_latched());
+
+    // Non-modifier key is pressed, latch is consumed
+    tracker.consume_latch();
+    assert(!tracker.state().shift);
+    assert(!tracker.is_latched());
+
+    // Physical hold: hold Shift, consume latch, release Shift -> should not latch
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Press);
+    assert(tracker.state().shift);
+    tracker.consume_latch(); // key typed while held
+    assert(tracker.state().shift); // still true because physically held!
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Release);
+    assert(!tracker.state().shift);
+    assert(!tracker.is_latched());
+
+    std::cout << "PASS: test_modifier_tracker_sticky_once\n";
+}
+
 int main() {
     test_debouncer_bounce();
     test_debouncer_repeat_disabled();
     test_debouncer_repeat_timing();
-    std::cout << "All InputDebouncer tests passed.\n";
+    test_modifier_tracker_disabled();
+    test_modifier_tracker_sticky_once();
+    std::cout << "All InputDebouncer and ModifierTracker tests passed.\n";
     return 0;
 }

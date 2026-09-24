@@ -1,25 +1,12 @@
 #pragma once
 #include "kindle/input.hpp"
 #include "kindle/key_catalog.hpp"
+#include "kindle/modifier_tracker.hpp"
 #include <linux/input.h>
 #include <string_view>
 #include <cstdint>
 
 namespace kindle {
-
-/**
- * Tracks the real-time active state of keyboard modifiers.
- */
-struct ModifierState {
-    bool shift{false};
-    bool ctrl{false};
-    bool alt{false};
-    bool sym{false};
-
-    [[nodiscard]] uint8_t to_mask() const noexcept {
-        return (shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0) | (sym ? 8 : 0);
-    }
-};
 
 /**
  * Translates low-level Linux evdev input events or KeyCode pairs into ASCII characters,

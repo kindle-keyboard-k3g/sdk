@@ -19,6 +19,14 @@ enum class KeyCode : uint16_t {
     Backspace,
     Dot,
     Slash,
+    Comma,       // Added: Linux scancode 51 or Alt+Dot
+    Semicolon,   // Added: Alt+M / Sym (scancode 39)
+    Apostrophe,  // Added: Sym (scancode 40)
+    Minus,       // Added: Alt+C (scancode 12)
+    Equal,       // Added: Alt+B (scancode 13)
+    LeftBracket, // Added: Alt+N (scancode 26)
+    RightBracket,// Added: Alt+M (DX) / Sym (scancode 27)
+    Backslash,   // Added: Alt+Slash (scancode 43)
 
     // Modifiers
     Shift,
@@ -59,9 +67,10 @@ enum class KeyEventType : uint8_t {
  * Decoded keyboard or hardware button event.
  */
 struct InputEvent {
-    KeyCode key{KeyCode::Unknown};       ///< Hardware key code
+    KeyCode key{KeyCode::Unknown};          ///< Hardware key code
     KeyEventType type{KeyEventType::Press}; ///< Event action type (press, release, repeat)
-    uint16_t raw_code{0};                ///< Raw Linux evdev scancode
+    uint16_t raw_code{0};                   ///< Raw Linux evdev scancode
+    uint64_t timestamp_us{0};               ///< Event timestamp in microseconds
 };
 
 /**

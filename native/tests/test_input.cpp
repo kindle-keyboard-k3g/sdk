@@ -22,6 +22,14 @@ void test_key_catalog() {
     assert(kindle::KeyCatalog::map_scancode(14, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Backspace);
     assert(kindle::KeyCatalog::map_scancode(52, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Dot);
     assert(kindle::KeyCatalog::map_scancode(53, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Slash);
+    assert(kindle::KeyCatalog::map_scancode(51, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Comma);
+    assert(kindle::KeyCatalog::map_scancode(39, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Semicolon);
+    assert(kindle::KeyCatalog::map_scancode(40, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Apostrophe);
+    assert(kindle::KeyCatalog::map_scancode(12, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Minus);
+    assert(kindle::KeyCatalog::map_scancode(13, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Equal);
+    assert(kindle::KeyCatalog::map_scancode(26, kindle::DeviceModel::Kindle3) == kindle::KeyCode::LeftBracket);
+    assert(kindle::KeyCatalog::map_scancode(27, kindle::DeviceModel::Kindle3) == kindle::KeyCode::RightBracket);
+    assert(kindle::KeyCatalog::map_scancode(43, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Backslash);
 
     // 3. Verify Modifiers
     assert(kindle::KeyCatalog::map_scancode(42, kindle::DeviceModel::Kindle3) == kindle::KeyCode::Shift);
@@ -91,6 +99,8 @@ void test_fake_input_multi() {
     fake.inject_key(kindle::KeyCode::Home, kindle::KeyEventType::Press);
     assert(fake.poll_event(ev));
     assert(ev.key == kindle::KeyCode::Home && ev.type == kindle::KeyEventType::Press);
+    ev.timestamp_us = 123456ULL;
+    assert(ev.timestamp_us == 123456ULL);
 
     fake.close();
     std::cout << "PASS: test_fake_input_multi\n";

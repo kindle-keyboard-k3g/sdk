@@ -133,7 +133,9 @@ bool LinuxEvdevInputDevice::poll_event(InputEvent& out_event, int timeout_ms) {
                         }
 
                         KeyCode key = KeyCatalog::map_scancode(buf[j].code, model_);
-                        buffered_events_.push_back(InputEvent{key, type, buf[j].code});
+                        uint64_t ts_us = static_cast<uint64_t>(buf[j].time.tv_sec) * 1000000ULL +
+                                         static_cast<uint64_t>(buf[j].time.tv_usec);
+                        buffered_events_.push_back(InputEvent{key, type, buf[j].code, ts_us});
                     }
                 }
             }

@@ -38,10 +38,10 @@ enum class LatchMode : uint8_t {
  */
 struct TrackerState {
     ModifierState current{};
-    ModifierState physical{};
-    bool          latched{false};
-    bool          locked{false};
-    bool          consumed_while_held{false};
+    uint8_t       physical_mask{0};
+    uint8_t       latched_mask{0};
+    uint8_t       locked_mask{0};
+    uint8_t       consumed_mask{0};
 };
 
 /**
@@ -73,7 +73,12 @@ public:
     /**
      * Checks if any modifier is currently latched for the next keypress.
      */
-    [[nodiscard]] bool is_latched() const noexcept { return state_.latched; }
+    [[nodiscard]] bool is_latched() const noexcept { return state_.latched_mask != 0; }
+
+    /**
+     * Checks if any modifier is currently locked.
+     */
+    [[nodiscard]] bool is_locked() const noexcept { return state_.locked_mask != 0; }
 
     /**
      * Consumes single-shot latch after a non-modifier key is pressed.
@@ -83,7 +88,7 @@ public:
 private:
     void handle_press(KeyCode key) noexcept;
     void handle_release(KeyCode key) noexcept;
-    void set_modifier_flag(ModifierState& s, KeyCode key, bool val) noexcept;
+    void sync_current() noexcept;
 
     LatchMode    mode_;
     TrackerState state_{};

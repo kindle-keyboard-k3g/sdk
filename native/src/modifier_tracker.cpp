@@ -2,9 +2,21 @@
 
 namespace kindle {
 
-static constexpr bool is_modifier_key(KeyCode key) noexcept {
-    return key == KeyCode::Shift || key == KeyCode::Alt ||
-           key == KeyCode::Ctrl  || key == KeyCode::Sym;
+static constexpr uint8_t key_to_mod_bit(KeyCode key) noexcept {
+    if (key == KeyCode::Shift) return ModifierState::MOD_SHIFT;
+    if (key == KeyCode::Ctrl)  return ModifierState::MOD_CTRL;
+    if (key == KeyCode::Alt)   return ModifierState::MOD_ALT;
+    if (key == KeyCode::Sym)   return ModifierState::MOD_SYM;
+    return 0;
+}
+
+static constexpr ModifierState mask_to_state(uint8_t mask) noexcept {
+    ModifierState s{};
+    s.shift = (mask & ModifierState::MOD_SHIFT) != 0;
+    s.ctrl  = (mask & ModifierState::MOD_CTRL)  != 0;
+    s.alt   = (mask & ModifierState::MOD_ALT)   != 0;
+    s.sym   = (mask & ModifierState::MOD_SYM)   != 0;
+    return s;
 }
 
 ModifierTracker::ModifierTracker(LatchMode mode) noexcept
@@ -14,41 +26,48 @@ void ModifierTracker::reset() noexcept {
     state_ = TrackerState{};
 }
 
-void ModifierTracker::set_modifier_flag(ModifierState& s, KeyCode key, bool val) noexcept {
-    if (key == KeyCode::Shift) { s.shift = val; return; }
-    if (key == KeyCode::Ctrl)  { s.ctrl = val; return; }
-    if (key == KeyCode::Alt)   { s.alt = val; return; }
-    if (key == KeyCode::Sym)   { s.sym = val; return; }
+void ModifierTracker::sync_current() noexcept {
+    uint8_t active = state_.physical_mask | state_.latched_mask | state_.locked_mask;
+    state_.current = mask_to_state(active);
 }
 
 void ModifierTracker::handle_press(KeyCode key) noexcept {
-    set_modifier_flag(state_.physical, key, true);
-    set_modifier_flag(state_.current, key, true);
-    if (mode_ == LatchMode::Lockable && state_.latched) {
-        state_.locked = true;
+    uint8_t bit = key_to_mod_bit(key);
+    state_.physical_mask |= bit;
+
+    if (mode_ == LatchMode::Lockable) {
+        if (state_.locked_mask & bit) {
+            state_.locked_mask &= ~bit;
+            state_.latched_mask &= ~bit;
+        } else if (state_.latched_mask & bit) {
+            state_.locked_mask |= bit;
+            state_.latched_mask &= ~bit;
+        }
     }
+    sync_current();
 }
 
 void ModifierTracker::handle_release(KeyCode key) noexcept {
-    set_modifier_flag(state_.physical, key, false);
+    uint8_t bit = key_to_mod_bit(key);
+    state_.physical_mask &= ~bit;
+
     if (mode_ == LatchMode::Disabled) {
-        set_modifier_flag(state_.current, key, false);
+        sync_current();
         return;
     }
-    if (state_.consumed_while_held) {
-        state_.consumed_while_held = false;
-        set_modifier_flag(state_.current, key, false);
+    if (state_.consumed_mask & bit) {
+        state_.consumed_mask &= ~bit;
+        sync_current();
         return;
     }
-    if (!state_.locked) {
-        state_.latched = true;
+    if (!(state_.locked_mask & bit)) {
+        state_.latched_mask |= bit;
     }
+    sync_current();
 }
 
 void ModifierTracker::update(KeyCode key, KeyEventType type) noexcept {
-    if (!is_modifier_key(key)) {
-        return;
-    }
+    if (key_to_mod_bit(key) == 0) return;
     if (type == KeyEventType::Press) {
         handle_press(key);
         return;
@@ -60,17 +79,9 @@ void ModifierTracker::update(KeyCode key, KeyEventType type) noexcept {
 }
 
 void ModifierTracker::consume_latch() noexcept {
-    if (state_.physical.to_mask() != 0) {
-        state_.consumed_while_held = true;
-    }
-    if (!state_.latched) {
-        return;
-    }
-    state_.latched = false;
-    if (state_.locked) {
-        return;
-    }
-    state_.current = state_.physical;
+    state_.consumed_mask |= state_.physical_mask;
+    state_.latched_mask = 0;
+    sync_current();
 }
 
 } // namespace kindle

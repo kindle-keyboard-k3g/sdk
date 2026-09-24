@@ -342,13 +342,16 @@ void test_consumer_recipe_kindle_myts() {
 
     // 1. Up arrow -> \033[A
     fake.inject_raw_event(kindle::KeyCatalog::CODE_FW_UP_K3, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_FW_UP_K3, 0);
     // 2. Shift + Up arrow -> \033[5~ (PageUp)
     fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 1);
     fake.inject_raw_event(kindle::KeyCatalog::CODE_FW_UP_K3, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_FW_UP_K3, 0);
     fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 0);
     // 3. Ctrl + C (Aa key on K3 = scancode 190) -> \x03
     fake.inject_raw_event(kindle::KeyCatalog::CODE_AA_CTRL_K3, 1);
     fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_C, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_C, 0);
     fake.inject_raw_event(kindle::KeyCatalog::CODE_AA_CTRL_K3, 0);
 
     kindle::KeyEvent ev;
@@ -366,6 +369,162 @@ void test_consumer_recipe_kindle_myts() {
     std::cout << "PASS: test_consumer_recipe_kindle_myts\n";
 }
 
+void test_debouncer_short_tap_and_bounce_sequence() {
+    std::cout << "Testing InputDebouncer short tap & bounce sequence...\n";
+    kindle::DebounceConfig config;
+    config.debounce_ms = 20;
+    kindle::InputDebouncer debouncer(config);
+
+    // 1. Short tap: press at 100ms, release at 110ms (< 20ms)
+    kindle::InputEvent press_a{kindle::KeyCode::A, kindle::KeyEventType::Press, 30, 0};
+    kindle::InputEvent release_a{kindle::KeyCode::A, kindle::KeyEventType::Release, 30, 0};
+
+    assert(debouncer.filter(press_a, 100));
+    // Release at 110ms is inside debounce window -> filter returns false but holds pending
+    assert(!debouncer.filter(release_a, 110));
+    // At t=115ms (15ms after press), pending release not ready yet
+    kindle::InputEvent pending_ev;
+    assert(!debouncer.poll_pending(115, pending_ev));
+    // At t=120ms (20ms after press), pending release is emitted
+    assert(debouncer.poll_pending(120, pending_ev));
+    assert(pending_ev.key == kindle::KeyCode::A);
+    assert(pending_ev.type == kindle::KeyEventType::Release);
+
+    // 2. Bounce sequence: Press at 200, bounce release at 205, bounce press at 210, real release at 300
+    assert(debouncer.filter(press_a, 200));
+    assert(!debouncer.filter(release_a, 205)); // suppressed as bounce
+    assert(!debouncer.filter(press_a, 210));   // duplicate press suppressed!
+    assert(!debouncer.poll_pending(225, pending_ev)); // pending release was cancelled by bounce press!
+    assert(debouncer.filter(release_a, 300));  // real release accepted
+    std::cout << "PASS: test_debouncer_short_tap_and_bounce_sequence\n";
+}
+
+void test_debouncer_per_key_interleaved() {
+    std::cout << "Testing InputDebouncer per-key independent timing...\n";
+    kindle::DebounceConfig config;
+    config.repeat_enabled = true;
+    config.repeat_delay_ms = 400;
+    config.repeat_interval_ms = 80;
+    config.debounce_ms = 20;
+    kindle::InputDebouncer debouncer(config);
+
+    kindle::InputEvent press_a{kindle::KeyCode::A, kindle::KeyEventType::Press, 30, 0};
+    kindle::InputEvent press_b{kindle::KeyCode::B, kindle::KeyEventType::Press, 48, 0};
+    kindle::InputEvent repeat_a{kindle::KeyCode::A, kindle::KeyEventType::Repeat, 30, 0};
+    kindle::InputEvent repeat_b{kindle::KeyCode::B, kindle::KeyEventType::Repeat, 48, 0};
+
+    // Press A at t=0, Press B at t=50
+    assert(debouncer.filter(press_a, 0));
+    assert(debouncer.filter(press_b, 50));
+
+    // At t=400ms: A has reached 400ms delay -> repeat accepted
+    assert(debouncer.filter(repeat_a, 400));
+    // At t=400ms: B has only reached 350ms (400 - 50) -> repeat rejected!
+    assert(!debouncer.filter(repeat_b, 400));
+
+    // At t=450ms: B has reached 400ms delay (450 - 50 = 400) -> repeat accepted!
+    assert(debouncer.filter(repeat_b, 450));
+
+    std::cout << "PASS: test_debouncer_per_key_interleaved\n";
+}
+
+void test_shortcut_repeat_suppression() {
+    std::cout << "Testing KeyboardManager shortcut repeat suppression...\n";
+    kindle::FakeInputDevice fake;
+    assert(fake.open());
+
+    kindle::DebounceConfig deb_cfg;
+    deb_cfg.debounce_ms = 0;
+    deb_cfg.repeat_delay_ms = 0;
+    kindle::KeyboardManager mgr(fake, kindle::DeviceModel::Kindle3, deb_cfg, kindle::LatchMode::Disabled);
+
+    // 1. Hold Alt, press G -> Ghostbuster on Press
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_G, 1);
+
+    kindle::KeyEvent ev;
+    assert(mgr.poll(ev)); // Alt press
+    assert(mgr.poll(ev)); // G press -> Ghostbuster
+    assert(ev.is_shortcut);
+    assert(ev.shortcut_action == kindle::ShortcutAction::Ghostbuster);
+
+    // 2. Repeat G while Alt is held -> MUST be suppressed!
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_G, 2);
+    assert(!mgr.poll(ev)); // Repeat of Ghostbuster must not be emitted!
+
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 0);
+    assert(mgr.poll(ev)); // Alt release
+
+    // 3. Repeat of Volume keys SHOULD be permitted
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_VOL_UP, 1); // Press
+    assert(mgr.poll(ev));
+    assert(ev.shortcut_action == kindle::ShortcutAction::VolumeUp);
+
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_VOL_UP, 2); // Repeat
+    assert(mgr.poll(ev));
+    assert(ev.shortcut_action == kindle::ShortcutAction::VolumeUp);
+
+    fake.close();
+    std::cout << "PASS: test_shortcut_repeat_suppression\n";
+}
+
+void test_modifier_tracker_multi_modifier_chord() {
+    std::cout << "Testing ModifierTracker multi-modifier chord latching...\n";
+    kindle::ModifierTracker tracker(kindle::LatchMode::StickyOnce);
+
+    // Hold Shift and Alt simultaneously
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Press);
+    tracker.update(kindle::KeyCode::Alt, kindle::KeyEventType::Press);
+    assert(tracker.state().shift && tracker.state().alt);
+
+    // Type a key while held -> consume latch
+    tracker.consume_latch();
+
+    // Release Shift first
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Release);
+    assert(!tracker.state().shift);
+    assert(tracker.state().alt); // Alt still physically held
+
+    // Release Alt second -> Alt was part of the consumed chord, must NOT latch!
+    tracker.update(kindle::KeyCode::Alt, kindle::KeyEventType::Release);
+    assert(!tracker.state().alt);
+    assert(!tracker.is_latched());
+
+    std::cout << "PASS: test_modifier_tracker_multi_modifier_chord\n";
+}
+
+void test_modifier_tracker_lockable_different_modifiers() {
+    std::cout << "Testing ModifierTracker Lockable mode with different modifiers...\n";
+    kindle::ModifierTracker tracker(kindle::LatchMode::Lockable);
+
+    // Tap Shift
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Press);
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Release);
+    assert(tracker.state().shift);
+    assert(tracker.is_latched());
+
+    // Press Alt (different modifier) -> must NOT lock!
+    tracker.update(kindle::KeyCode::Alt, kindle::KeyEventType::Press);
+    tracker.update(kindle::KeyCode::Alt, kindle::KeyEventType::Release);
+    // Neither should be locked
+    tracker.consume_latch();
+    assert(!tracker.state().shift);
+    assert(!tracker.state().alt);
+    assert(!tracker.is_latched());
+
+    // Double tap Shift -> must lock Shift!
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Press);
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Release);
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Press);
+    tracker.update(kindle::KeyCode::Shift, kindle::KeyEventType::Release);
+
+    // Consume latch -> Shift must REMAIN active because it is locked!
+    tracker.consume_latch();
+    assert(tracker.state().shift);
+
+    std::cout << "PASS: test_modifier_tracker_lockable_different_modifiers\n";
+}
+
 int main() {
     test_debouncer_bounce();
     test_debouncer_repeat_disabled();
@@ -377,6 +536,11 @@ int main() {
     test_consumer_recipe_dino();
     test_consumer_recipe_papergram();
     test_consumer_recipe_kindle_myts();
+    test_debouncer_short_tap_and_bounce_sequence();
+    test_debouncer_per_key_interleaved();
+    test_shortcut_repeat_suppression();
+    test_modifier_tracker_multi_modifier_chord();
+    test_modifier_tracker_lockable_different_modifiers();
     std::cout << "All InputDebouncer, ModifierTracker, ShortcutRegistry, and KeyboardManager tests passed.\n";
     return 0;
 }

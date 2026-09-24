@@ -1,6 +1,7 @@
 #pragma once
 #include "kindle/input.hpp"
 #include "kindle/key_catalog.hpp"
+#include <array>
 #include <vector>
 #include <string>
 
@@ -61,12 +62,16 @@ public:
     bool poll_event(InputEvent& out_event, int timeout_ms);
 
 private:
-    std::vector<std::string> device_paths_;
-    std::vector<int>         fds_;
-    bool                     grab_exclusive_;
-    bool                     grabbed_{false};
-    DeviceModel              model_;
-    std::vector<InputEvent>  buffered_events_;
+    static constexpr size_t BUFFER_CAPACITY = 256;
+
+    std::vector<std::string>                device_paths_;
+    std::vector<int>                        fds_;
+    bool                                    grab_exclusive_;
+    bool                                    grabbed_{false};
+    DeviceModel                             model_;
+    std::array<InputEvent, BUFFER_CAPACITY> buffered_events_{};
+    size_t                                  buffer_head_{0};
+    size_t                                  buffer_count_{0};
 };
 
 } // namespace kindle

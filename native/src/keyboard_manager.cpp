@@ -42,11 +42,15 @@ bool KeyboardManager::process_modifier(const InputEvent& raw_ev, KeyEvent& out_e
 
 bool KeyboardManager::process_key(const InputEvent& raw_ev, KeyEvent& out_event) noexcept {
     out_event.modifiers = tracker_.state();
-    if (raw_ev.type == KeyEventType::Release) {
-        return true;
-    }
+    if (raw_ev.type == KeyEventType::Release) return true;
     if (shortcuts_.has_binding(raw_ev.key, tracker_.state())) {
-        out_event.shortcut_action = shortcuts_.check(raw_ev.key, tracker_.state());
+        ShortcutAction act = shortcuts_.check(raw_ev.key, tracker_.state());
+        if (raw_ev.type == KeyEventType::Repeat) {
+            if (act != ShortcutAction::VolumeUp && act != ShortcutAction::VolumeDown) {
+                return false;
+            }
+        }
+        out_event.shortcut_action = act;
         out_event.is_shortcut = true;
         tracker_.consume_latch();
         return true;
@@ -65,13 +69,21 @@ bool KeyboardManager::process_raw_event(const InputEvent& raw_ev, KeyEvent& out_
 }
 
 bool KeyboardManager::poll(KeyEvent& out_event) noexcept {
+    uint64_t now_ms = current_time_ms(InputEvent{});
+    InputEvent pending_ev;
+    if (debouncer_.poll_pending(now_ms, pending_ev)) {
+        return process_raw_event(pending_ev, out_event);
+    }
     InputEvent raw_ev;
     while (device_.poll_event(raw_ev)) {
         uint64_t time_ms = current_time_ms(raw_ev);
         if (!debouncer_.filter(raw_ev, time_ms)) {
             continue;
         }
-        return process_raw_event(raw_ev, out_event);
+        if (!process_raw_event(raw_ev, out_event)) {
+            continue;
+        }
+        return true;
     }
     return false;
 }

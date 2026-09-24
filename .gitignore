@@ -31,3 +31,5 @@ __pycache__/
 *.azw2
 artifacts/
 .playwright-mcp/
+.worktrees/
+.superpowers/

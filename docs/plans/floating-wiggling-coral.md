@@ -1,299 +1,410 @@
-# Plan: Audio Subsystem for kindle-sdk
+# Plan: Improved Keyboard Management Subsystem for kindle-sdk
 
-## Context
+## 1. Context & Motivation
 
-The kindle-sdk has no audio support. Three consumer apps need it:
+The Kindle Keyboard 3G (K3/K3G) and Kindle DX platforms present distinct physical and embedded constraints:
+- **Missing Hardware Number Row on K3**: Unlike the Kindle DX, the K3 physical keyboard only has 4 rows (`QWERTY`, `ASDF`, `ZXCV`, and space/modifier row). Numbers (`1`..`0`) are generated either via `Alt + Q..P` chords or mapped directly by the kernel to Linux scancodes 2..11 (`KEY_1`..`KEY_0`).
+- **Missing Punctuation Keys**: The physical keyboard lacks dedicated keys for comma (`,`), colon (`:`), semicolon (`;`), brackets (`[` `]`), braces (`{` `}`), quotes (`'` `"`), hyphen/plus (`-` `=`), and backslash (`\`). Users rely on `Alt + letter` chords and the `Sym` key.
+- **Hardware Bouncing & Mechanical Age**: On aging Kindle hardware, physical switch contacts can chatter and bounce, generating spurious press/release events within 10–30 ms.
+- **E-Ink Refresh Latency vs. Auto-Repeat Flooding**: Hardware/kernel auto-repeat (`ev.value == 2`) generates events at 20–30 Hz. When piped directly to an E-Ink display, this floods the event queue with partial updates, causing sluggish response and ghosting build-up.
+- **Handheld Typing Ergonomics (Sticky/Latch Modifiers)**: When holding the Kindle with one or two hands, multi-key chording (e.g. holding `Shift` + `Z`, or `Alt` + `G`) can be clumsy. A sticky/latch modifier mode (tap `Shift` once to latch next character, double-tap to lock) provides superior ergonomics.
 
-- **dino** — game sound FX (jump, die, milestone) synthesized as tones. Must be non-blocking; one frame = ~80ms.
-- **papergram** — notification ping on incoming messages. Small WAV embedded or fetched from network. Non-blocking.
-- **kindle-myts** — terminal BEL (`\a`, 0x07). Short generated beep, currently unhandled by AnsiParser.
-
-Kindle 3G hardware has real audio output: i.MX353 SSI + WM8750 codec, accessible via OSS `/dev/dsp` and mixer via `/dev/mixer`. Linux 2.6.26 with EGLIBC 2.11. Static linking required → OSS (`<sys/soundcard.h>`) is chosen over libasound to avoid ~500 KB library dependency. K3 RAM budget ≤ 30 MB for user apps.
-
-Design: Approach B — fire-and-forget async player with dedicated worker thread. `play()` is non-blocking for callers; a background thread writes PCM to `/dev/dsp`. Volume control via `/dev/mixer` exposed through the interface, wired to `VolumeUp`/`VolumeDown` key events in each app.
-
-Network audio: buffer-then-play. `fetch_audio()` downloads a WAV via `network::HttpClient`, enforces a 1 MB cap, returns an `AudioClip` ready for `play()`.
+### Consumer Application Needs
+1. **`dino` (Game)**: Requires instantaneous, debounced key press/release actions (`Jump`, `Duck`, `Quit`, `Restart`). Must bypass character translation latency, disable auto-repeat for jump commands, and support hardware volume keys.
+2. **`papergram` (Messaging)**: Requires full alphanumeric and symbol typing (including commas via `Alt+Dot`, quotes, exclamation, brackets), cursor navigation via 5-way D-Pad, smooth debounced text input, and global `Alt+G` ("Ghostbuster") manual full E-Ink refresh.
+3. **`kindle-myts` (Terminal Emulator)**: Requires deterministic zero-allocation ANSI escape sequence generation (`\033[A`..`\033[D`, `\033[5~`, `\033[6~`), ASCII control characters (`Ctrl+A` through `Ctrl+Z` via the `Aa` key), `Shift+Arrows` page scrolling, and chord interception for modal overlays.
 
 ---
 
-## Files to Create
+## 2. Architecture & Component Decomposition
 
-### `native/include/kindle/audio.hpp`
-Abstract interface and data types. No platform headers.
+Following **SOLID** and **Object Calisthenics** (Single Responsibility, interfaces, classes ≤100 lines, functions ≤15 lines, no `else`, zero dynamic allocations in hot paths), the keyboard management subsystem is decomposed into five focused components:
 
 ```
-namespace kindle::audio {
+Linux evdev (/dev/input/event0, event1, event2) or FakeInputDevice
+                           |
+                           v  InputEvent (raw scancode, press/release/repeat, timestamp_us)
+               +-----------------------+
+               |     InputDebouncer    |  Suppresses mechanical contact bounce (<20ms)
+               +-----------------------+  and regulates auto-repeat rate
+                           |
+                           v  Debounced InputEvent
+               +-----------------------+
+               |    ModifierTracker    |  Tracks Shift, Alt, Ctrl (Aa), Sym
+               +-----------------------+  Supports both active chording & sticky latch mode
+                           |
+                           v  (KeyCode, ModifierState)
+               +-----------------------+
+               |   ShortcutRegistry    |  Matches registered chords (e.g. Alt+G Ghostbuster,
+               +-----------------------+  VolumeUp/Down) -> triggers action/callback
+                           | (if not consumed by shortcut)
+                           v
+               +-----------------------+
+               |   KeyboardTranslator  |  Decodes keycode + modifiers into ASCII/UTF-8
+               +-----------------------+  or ANSI escape sequences (zero heap allocation)
+                           |
+                           v
+               Rich KeyEvent (KeyCode, KeyEventType, ModifierState, text, is_shortcut)
+```
 
-enum class SampleFormat { S16LE };
+---
 
-struct AudioSpec {
-    uint32_t sample_rate = 22050;  // K3 supports 8000, 11025, 22050, 44100
-    uint8_t  channels    = 1;      // mono (K3 speaker is mono)
-    SampleFormat format  = SampleFormat::S16LE;
+## 3. Data Structures & Interfaces
+
+### 3.1 Extended KeyCodes & InputEvent (`native/include/kindle/input.hpp`)
+Extend `KeyCode` with missing punctuation and add `timestamp_us` to `InputEvent`:
+
+```cpp
+namespace kindle {
+
+enum class KeyCode : uint16_t {
+    // Alphanumeric keys
+    A, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+
+    // Punctuation & Editing
+    Enter,
+    Space,
+    Backspace,
+    Dot,
+    Slash,
+    Comma,       // Added: Linux scancode 51 or Alt+Dot
+    Semicolon,   // Added: Alt+M / Sym
+    Apostrophe,  // Added: Sym
+    Minus,       // Added: Alt+C
+    Equal,       // Added: Alt+B
+    LeftBracket, // Added: Alt+N
+    RightBracket,// Added: Alt+M (DX) / Sym
+    Backslash,   // Added: Alt+Slash
+
+    // Modifiers
+    Shift,
+    Alt,
+    Sym,
+    Ctrl,
+
+    // Navigation & Kindle Buttons
+    Up,
+    Down,
+    Left,
+    Right,
+    Select,
+    PageUp,
+    PageDown,
+    Back,
+    Menu,
+    Home,
+
+    // Hardware functions
+    VolumeUp,
+    VolumeDown,
+    Power,
+
+    Unknown
 };
 
-struct AudioClip {
-    std::vector<int16_t> samples;  // interleaved PCM
-    AudioSpec spec;
+struct InputEvent {
+    KeyCode key{KeyCode::Unknown};
+    KeyEventType type{KeyEventType::Press};
+    uint16_t raw_code{0};
+    uint64_t timestamp_us{0};
 };
 
-// Synthesize a pure sine-tone clip (no file I/O)
-// Caps duration at 5000 ms; freq must be 20–20000 Hz.
-AudioClip make_beep(uint32_t freq_hz, uint32_t duration_ms,
-                    const AudioSpec& spec = {});
+} // namespace kindle
+```
 
-// Parse RIFF/PCM WAV from file. Throws std::runtime_error on failure.
-// Rejects files > 1 MB.
-AudioClip load_wav(const std::string& path);
+### 3.2 Debounce & Key-Repeat Engine (`native/include/kindle/input_debouncer.hpp`)
+Suppresses mechanical switch bounce and synthesizes/filters key repeat events:
 
-class AudioPlayer {
+```cpp
+namespace kindle {
+
+struct DebounceConfig {
+    uint32_t debounce_ms{20};       // Ignore bounces within 20ms
+    bool     repeat_enabled{true};  // If false, drops repeat events (e.g. for dino jumps)
+    uint32_t repeat_delay_ms{400};  // Initial hold delay before repeat starts
+    uint32_t repeat_interval_ms{80};// Interval between repeated events
+};
+
+class InputDebouncer {
 public:
-    virtual ~AudioPlayer() = default;
-    virtual bool    open(const AudioSpec& spec) = 0;  // returns false if /dev/dsp unavailable
-    virtual void    close() = 0;
-    virtual void    play(const AudioClip& clip) = 0;  // non-blocking; replaces queued clip
-    virtual void    stop() = 0;
-    virtual bool    is_playing() const = 0;
-    virtual void    set_volume(uint8_t level) = 0;    // 0–100
-    virtual uint8_t get_volume() const = 0;
-};
-}
-```
+    explicit InputDebouncer(const DebounceConfig& config = {}) noexcept;
 
-### `native/include/kindle/linux_audio.hpp`
-Declaration for `LinuxOssAudioPlayer`.
+    /**
+     * Filters raw input events. Returns true if event is valid and should be processed;
+     * returns false if event is suppressed as bounce or filtered repeat.
+     */
+    bool filter(const InputEvent& in_event, uint64_t current_time_ms) noexcept;
 
-```
-namespace kindle::audio {
-class LinuxOssAudioPlayer : public AudioPlayer {
-public:
-    // dsp_path defaults to "/dev/dsp"; mixer_path defaults to "/dev/mixer"
-    explicit LinuxOssAudioPlayer(std::string dsp_path   = "/dev/dsp",
-                                  std::string mixer_path = "/dev/mixer");
-    ~LinuxOssAudioPlayer() override;
-    bool    open(const AudioSpec& spec) override;
-    void    close() override;
-    void    play(const AudioClip& clip) override;
-    void    stop() override;
-    bool    is_playing() const override;
-    void    set_volume(uint8_t level) override;
-    uint8_t get_volume() const override;
+    void reset() noexcept;
 
 private:
-    // worker thread, mutex, condition_variable, pending clip
+    DebounceConfig config_;
+    KeyCode        last_key_{KeyCode::Unknown};
+    KeyEventType   last_type_{KeyEventType::Release};
+    uint64_t       last_transition_ms_{0};
 };
-}
+
+} // namespace kindle
 ```
 
-### `native/include/kindle/fake_audio.hpp`
-Header-only fake for tests. Mirrors `fake_eink.hpp` style.
+### 3.3 Modifier Tracker with Sticky/Latch Mode (`native/include/kindle/modifier_tracker.hpp`)
+Maintains modifier state for Shift, Alt, Ctrl (Aa key on K3/DX), and Sym. Supports both held chords and single-tap latching:
 
-```
-namespace kindle::audio {
-class FakeAudioPlayer : public AudioPlayer {
+```cpp
+namespace kindle {
+
+enum class LatchMode : uint8_t {
+    Disabled,   // Pure physical hold (default for games and terminal)
+    StickyOnce, // Press & release modifier latches for next keypress only
+    Lockable    // Double-tap locks modifier (Caps Lock / Alt Lock)
+};
+
+class ModifierTracker {
 public:
-    bool    open(const AudioSpec&) override { is_open_ = true; return true; }
-    void    close() override { is_open_ = false; is_playing_ = false; }
-    void    play(const AudioClip& clip) override {
-        last_clip_ = clip; ++play_count_; is_playing_ = true;
-    }
-    void    stop() override { is_playing_ = false; ++stop_count_; }
-    bool    is_playing() const override { return is_playing_; }
-    void    set_volume(uint8_t v) override { volume_ = v; }
-    uint8_t get_volume() const override { return volume_; }
+    explicit ModifierTracker(LatchMode mode = LatchMode::Disabled) noexcept;
 
-    // Test inspection
-    uint32_t         get_play_count() const { return play_count_; }
-    uint32_t         get_stop_count() const { return stop_count_; }
-    const AudioClip& get_last_clip()  const { return last_clip_; }
-    bool             is_open()        const { return is_open_; }
+    void update(KeyCode key, KeyEventType type) noexcept;
+    void reset() noexcept;
+
+    [[nodiscard]] const ModifierState& state() const noexcept { return current_; }
+    [[nodiscard]] bool is_latched() const noexcept { return latched_; }
+
+    // Consumes single-shot latch after a non-modifier key is pressed
+    void consume_latch() noexcept;
+
 private:
-    AudioClip last_clip_;
-    uint32_t  play_count_ = 0;
-    uint32_t  stop_count_ = 0;
-    uint8_t   volume_     = 70;
-    bool      is_open_    = false;
-    bool      is_playing_ = false;
+    void handle_press(KeyCode key) noexcept;
+    void handle_release(KeyCode key) noexcept;
+
+    LatchMode     mode_;
+    ModifierState current_{};
+    bool          latched_{false};
+    bool          locked_{false};
 };
-}
+
+} // namespace kindle
 ```
 
-### `native/include/kindle/audio_loader.hpp`
-Network clip fetcher. Depends on `network.hpp`.
+### 3.4 Expanded Keyboard Translator (`native/include/kindle/keyboard_translator.hpp`)
+Complete Kindle Keyboard (K3) and DX symbol mapping table:
+- `Alt + Q..P` -> `'1'`, `'2'`, `'3'`, `'4'`, `'5'`, `'6'`, `'7'`, `'8'`, `'9'`, `'0'`
+- `Alt + A..L` -> `'~'`, `'!'`, `'@'`, `'#'`, `'$'`, `'%'`, `'^'`, `'&'`, `'*'`
+- `Alt + Z..M` -> `'('`, `')'`, `'-'`, `'+'`, `'='`, `'['`, `']'`
+- `Alt + Dot` -> `','` (Comma on K3!)
+- `Alt + Slash` -> `'\\'` (Backslash)
+- `Alt + Space` -> `'_'` (Underscore)
+- `Alt + Backspace` -> `'\x7f'`
+- `Sym + letter` -> Extended symbol table (`'{'`, `'}'`, `'<'`, `'>'`, `';'`, `':'`, `'\'`, `'"'`, `` '`' ``, `'|'`)
+- `Ctrl + A..Z` (via `Aa` key) -> `0x01`..`0x1A`
+- Navigation keys -> ANSI escape sequences (`\033[A`, `\033[B`, `\033[C`, `\033[D`, `\033[5~`, `\033[6~`, `\033[H`, `\033`)
+- `Shift + Up/Down` -> `\033[5~` / `\033[6~` (PageUp / PageDown)
 
-```
-namespace kindle::audio {
-// Fetches a WAV from url via client. Enforces 1 MB cap.
-// Throws std::runtime_error on HTTP failure or invalid WAV.
-AudioClip fetch_audio(network::HttpClient& client, const std::string& url);
-}
-```
+```cpp
+namespace kindle {
 
-### `native/src/audio.cpp`
-Implements `make_beep` and `load_wav`.
+class KeyboardTranslator {
+public:
+    explicit KeyboardTranslator(DeviceModel model = DeviceModel::Kindle3) noexcept;
 
-- `make_beep`: generate N = sample_rate × duration_ms / 1000 samples using
-  `sample[i] = 32767 × sin(2π × freq × i / sample_rate)`. Integer-only math
-  (fixed-point sine or `sinf` from softfp VFP). Cap at 5000 ms / 20–20000 Hz.
-- `load_wav`: open file, validate "RIFF"/"WAVE"/"fmt "/"data" chunks, assert
-  PCM format (wFormatTag=1), channels=1, 16-bit. Read samples into vector.
-  Reject if file > 1 MB before reading.
+    /**
+     * Translates KeyCode and ModifierState into ASCII char, symbol, or ANSI escape sequence.
+     * Returns std::string_view backed by internal fixed buffer (zero heap allocation).
+     */
+    std::string_view translate(KeyCode key, const ModifierState& mods) noexcept;
 
-### `native/src/audio_loader.cpp`
-Implements `fetch_audio`.
+private:
+    std::string_view translate_letters(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_alt_symbols(KeyCode key) noexcept;
+    std::string_view translate_sym_symbols(KeyCode key) noexcept;
+    std::string_view translate_numbers(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_punctuation(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_navigation(KeyCode key, const ModifierState& mods) noexcept;
 
-- Call `client.get(url)`, check `response.ok()`.
-- Guard: `response.body.size() > 1 MB → throw`.
-- Copy body bytes to a temp buffer, call `load_wav` logic on the in-memory buffer
-  (extract a helper `parse_wav(const uint8_t*, size_t)` used by both `load_wav`
-  and `fetch_audio`).
+    std::string_view emit(const char* str) noexcept;
+    std::string_view emit_char(char c) noexcept;
 
-### `native/platform/linux/oss_audio_linux.cpp`
-Implements `LinuxOssAudioPlayer`.
+    DeviceModel model_;
+    char        buffer_[16]{};
+};
 
-**open():**
-```
-fd_ = ::open(dsp_path_, O_WRONLY);
-// SNDCTL_DSP_SETFMT → AFMT_S16_LE
-// SNDCTL_DSP_CHANNELS → 1
-// SNDCTL_DSP_SPEED → spec.sample_rate
-// SNDCTL_DSP_SETFRAGMENT → 0x00040009 (16 frags of 512 bytes each)
-// open /dev/mixer, read initial volume
-// launch worker std::thread
-```
-
-**play():**
-```
-{ std::lock_guard lock(mutex_); pending_ = clip; }
-cv_.notify_one();
+} // namespace kindle
 ```
 
-**worker thread loop:**
-```
-while (!quit_) {
-    std::unique_lock lock(mutex_);
-    cv_.wait(lock, [&]{ return quit_ || pending_.has_value(); });
-    if (quit_) break;
-    AudioClip clip = std::move(*pending_); pending_.reset();
-    is_playing_ = true;
-    lock.unlock();
-    // write clip.samples as raw bytes to fd_ in 512-sample chunks
-    is_playing_ = false;
-}
+### 3.5 Shortcut & Chord Registry (`native/include/kindle/shortcut_registry.hpp`)
+Lightweight, fixed-capacity callback/action registry for global and custom chords:
+- Pre-bound: `Alt + G` -> `ShortcutAction::Ghostbuster` (manual E-Ink full refresh)
+- Pre-bound: `VolumeUp` / `VolumeDown` -> `ShortcutAction::VolumeUp` / `VolumeDown`
+- Custom callback registration with zero dynamic memory allocation:
+
+```cpp
+namespace kindle {
+
+enum class ShortcutAction : uint8_t {
+    None,
+    Ghostbuster,   // Alt+G: Full E-Ink refresh
+    VolumeUp,      // VolumeUp key
+    VolumeDown,    // VolumeDown key
+    Home,          // Home / Alt+H
+    Back,          // Back / Alt+B
+    Menu           // Menu / Alt+M
+};
+
+using ShortcutHandler = void (*)(void* user_data);
+
+struct ShortcutBinding {
+    uint8_t         mod_mask{0};
+    KeyCode         key{KeyCode::Unknown};
+    ShortcutAction  action{ShortcutAction::None};
+    ShortcutHandler handler{nullptr};
+    void*           user_data{nullptr};
+};
+
+class ShortcutRegistry {
+public:
+    ShortcutRegistry() noexcept;
+
+    bool bind_action(uint8_t mod_mask, KeyCode key, ShortcutAction action) noexcept;
+    bool bind_callback(uint8_t mod_mask, KeyCode key, ShortcutHandler handler, void* user_data = nullptr) noexcept;
+    void reset() noexcept;
+
+    /**
+     * Checks if event matches a registered chord.
+     * If matched, triggers handler (if any) and returns action.
+     */
+    ShortcutAction check(KeyCode key, const ModifierState& mods) noexcept;
+
+private:
+    static constexpr size_t MAX_BINDINGS = 16;
+    ShortcutBinding bindings_[MAX_BINDINGS]{};
+    size_t          count_{0};
+};
+
+} // namespace kindle
 ```
 
-**set_volume():**
-```
-int packed = (level << 8) | level;   // same for both L and R channels
-::ioctl(mixer_fd_, SOUND_MIXER_WRITE_PCM, &packed);
-volume_ = level;
-```
+### 3.6 Unified KeyboardManager Facade (`native/include/kindle/keyboard_manager.hpp`)
+Coordinates `InputDevice`, `InputDebouncer`, `ModifierTracker`, `ShortcutRegistry`, and `KeyboardTranslator` into a clean high-level pipeline:
 
-**close():**
+```cpp
+namespace kindle {
+
+struct KeyEvent {
+    KeyCode          key{KeyCode::Unknown};
+    KeyEventType     type{KeyEventType::Press};
+    ModifierState    modifiers{};
+    std::string_view text{};           // Decoded character or escape sequence
+    ShortcutAction   shortcut_action{ShortcutAction::None};
+    bool             is_shortcut{false};
+};
+
+class KeyboardManager {
+public:
+    explicit KeyboardManager(
+        InputDevice& device,
+        DeviceModel model = DeviceModel::Kindle3,
+        const DebounceConfig& debounce = {},
+        LatchMode latch = LatchMode::Disabled) noexcept;
+
+    /**
+     * Polls the next high-level KeyEvent. Returns false if no event available.
+     * Zero heap allocation.
+     */
+    bool poll(KeyEvent& out_event) noexcept;
+
+    ShortcutRegistry& shortcuts() noexcept { return shortcuts_; }
+    const ModifierState& modifiers() const noexcept { return tracker_.state(); }
+    void reset() noexcept;
+
+private:
+    InputDevice&       device_;
+    InputDebouncer     debouncer_;
+    ModifierTracker    tracker_;
+    KeyboardTranslator translator_;
+    ShortcutRegistry   shortcuts_;
+};
+
+} // namespace kindle
 ```
-{ std::lock_guard lock(mutex_); quit_ = true; }
-cv_.notify_all();
-thread_.join();
-::close(fd_); ::close(mixer_fd_);
-```
-
-Edge cases:
-- `open()` returns `false` if `/dev/dsp` fails → callers degrade silently.
-- `play()` called while playing: new clip replaces pending_ (next in queue), current write finishes.
-- `stop()`: sets `stop_requested_` atomic; worker skips remaining write chunks.
-- Fragment size of 512 samples @ 22050 Hz ≈ 23ms per write — low latency, no overrun.
-
-### `native/tests/test_audio.cpp`
-Unit tests using `FakeAudioPlayer` (no real audio hardware needed).
-
-Tests to cover:
-- `make_beep` produces correct sample count and non-zero amplitude
-- `load_wav` parses a minimal RIFF/PCM WAV blob (embed a 100-sample test WAV as a constexpr array)
-- `load_wav` throws on truncated/invalid WAV
-- `load_wav` throws when size > 1 MB
-- `FakeAudioPlayer::play` increments `play_count_`, stores `last_clip_`
-- `FakeAudioPlayer::stop` increments `stop_count_`, clears `is_playing_`
-- `FakeAudioPlayer::set_volume` / `get_volume` round-trip
-- `fetch_audio` with a mock `HttpClient` (inject `FakeSocketBackend` from existing network tests)
-- `fetch_audio` throws when response body > 1 MB
 
 ---
 
-## Files to Modify
+## 4. Files to Create & Modify
 
-### `native/CMakeLists.txt`
-Add to `kindle_native` sources:
-```cmake
-src/audio.cpp
-src/audio_loader.cpp
-platform/fake/fake_audio.cpp      # (or keep header-only; no .cpp needed for fake)
-platform/linux/oss_audio_linux.cpp
-```
+### Files to Create:
+1. `native/include/kindle/input_debouncer.hpp` — Interface and config for debounce & repeat.
+2. `native/src/input_debouncer.cpp` — Implementation of debounce filter and repeat limiter.
+3. `native/include/kindle/modifier_tracker.hpp` — Modifier tracking and sticky latch engine.
+4. `native/src/modifier_tracker.cpp` — Implementation of modifier transition state machine.
+5. `native/include/kindle/shortcut_registry.hpp` — Chord table and callback dispatching.
+6. `native/src/shortcut_registry.cpp` — Implementation of fixed-capacity shortcut registry.
+7. `native/include/kindle/keyboard_manager.hpp` — High-level keyboard facade.
+8. `native/src/keyboard_manager.cpp` — Integration pipeline implementation.
+9. `native/tests/test_keyboard_manager.cpp` — Comprehensive unit test suite.
 
-Add test target:
-```cmake
-add_executable(test_audio tests/test_audio.cpp)
-target_link_libraries(test_audio kindle_native)
-add_test(NAME test_audio COMMAND test_audio)
-```
-
-No new CMake options — OSS has zero external dependencies.
+### Files to Modify:
+1. `native/include/kindle/input.hpp`:
+   - Add missing `KeyCode`s (`Comma`, `Semicolon`, `Apostrophe`, `Minus`, `Equal`, `LeftBracket`, `RightBracket`, `Backslash`).
+   - Add `timestamp_us` to `InputEvent`.
+2. `native/include/kindle/key_catalog.hpp`:
+   - Add scancode 51 (`KEY_COMMA`) and extended hardware codes for K3 / DX.
+3. `native/src/keyboard_translator.cpp`:
+   - Expand `translate()` with complete Kindle 3 `Alt+letter` and `Sym` tables.
+4. `native/CMakeLists.txt`:
+   - Add `src/input_debouncer.cpp`, `src/modifier_tracker.cpp`, `src/shortcut_registry.cpp`, `src/keyboard_manager.cpp` to `kindle_native`.
+   - Add `test_keyboard_manager` test target.
 
 ---
 
-## Per-App Integration Guidance (not in SDK, documented here for implementers)
+## 5. Consumer Integration Recipes
 
-### dino
-- At app startup: instantiate `LinuxOssAudioPlayer` (or `FakeAudioPlayer` for tests).
-- Pre-generate clips: `jump_sound_ = make_beep(880, 60)`, `die_sound_ = make_beep(220, 300)`,
-  `milestone_sound_ = make_beep(1320, 150)`.
-- Call `audio_.play(jump_sound_)` in game event handlers.
-- Wire in input handler:
+### 5.1 `dino` (Game)
+- Instantiate `KeyboardManager` with `repeat_enabled = false` and `LatchMode::Disabled`.
+- Listen directly to `event.key` and `event.type == KeyEventType::Press` for zero latency:
   ```cpp
-  case KeyCode::VolumeUp:   audio_.set_volume(std::min(100u, audio_.get_volume() + 10u)); break;
-  case KeyCode::VolumeDown: audio_.set_volume(audio_.get_volume() >= 10u ? audio_.get_volume() - 10u : 0u); break;
+  if (ev.key == KeyCode::Space || ev.key == KeyCode::Up) game.jump();
+  else if (ev.key == KeyCode::Down || ev.key == KeyCode::D) game.duck(ev.type == KeyEventType::Press);
   ```
 
-### papergram
-- Embed a short notification WAV as `constexpr uint8_t kPingWav[]` (a 0.5s sine chirp, ~44 KB).
-- On message received: `audio_.play(ping_clip_)`.
-- For custom sounds: `fetch_audio(http_client_, notification_url_)`, store as `AudioClip`, play.
-- Volume wired to same key handler pattern.
+### 5.2 `papergram` (Messaging)
+- Configure `LatchMode::StickyOnce` for comfortable thumb typing.
+- Register `Alt+G` with `ShortcutRegistry` for manual E-Ink ghostbuster full refresh:
+  ```cpp
+  manager.shortcuts().bind_action(ModifierState::MOD_ALT, KeyCode::G, ShortcutAction::Ghostbuster);
+  ```
+- Use `ev.text` directly to append typed characters to the active input text box.
 
-### kindle-myts
-- `AnsiParser` currently has no BEL handler. Add `on_bel()` to `IAnsiHandler` interface.
-- In `TerminalSession::on_bel()`: `audio_.play(bell_clip_)` where
-  `bell_clip_ = make_beep(440, 200)` created at startup.
-- Volume keys wire into `InputManager` like other keys.
-
----
-
-## Volume Control Rules
-
-| Condition | Behavior |
-|-----------|----------|
-| `/dev/mixer` unavailable | `set_volume` is no-op; `get_volume` returns default 70 |
-| Volume set while playing | Takes effect immediately on next write chunk |
-| Volume = 0 | Silence; PCM writes continue (driver handles muting) |
-| App receives VolumeUp | Call `set_volume(min(100, get_volume() + 10))` |
-| App receives VolumeDown | Call `set_volume(get_volume() >= 10 ? get_volume() - 10 : 0)` |
+### 5.3 `kindle-myts` (Terminal)
+- Feed `ev.text` directly into the PTY master descriptor when non-empty.
+- Handle `ShortcutAction::Ghostbuster` to trigger `eink_display.update_display_full()`.
+- Modifier states (Shift, Ctrl via Aa, Alt) are tracked automatically without custom app loops.
 
 ---
 
-## Verification
+## 6. Verification & Test Plan
 
-```bash
-cd native/build
-cmake .. && make test_audio
-./test_audio         # all tests pass without audio hardware
-
-# On Kindle hardware or with ALSA OSS loaded:
-# Write a small test program that calls make_beep + LinuxOssAudioPlayer
-# Hear the tone through headphones or speaker
-
-# Cross-compile check:
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/Toolchain-Kindle-ARMv6.cmake
-make kindle_native   # must link with no new external symbols
-```
-
-No new libraries introduced. All tests run on host (x86_64) using `FakeAudioPlayer`.
+Follow strict **Test-Driven Development (TDD)** using `FakeInputDevice`:
+1. **Debounce Tests**:
+   - Inject bouncing transitions (<20ms); assert bounce events are dropped.
+   - Inject repeat events with `repeat_enabled = false`; assert repeats are ignored.
+   - Inject repeat events with `repeat_enabled = true`; assert repeats pass after delay.
+2. **Modifier & Latch Tests**:
+   - Verify standard held chords (`Shift` held + `A` -> uppercase `'A'`).
+   - Verify `StickyOnce` mode: tap `Shift`, release `Shift`, press `A` -> uppercase `'A'`, next key `'b'` is lowercase.
+   - Verify `Aa` key sets `ctrl` modifier; `Ctrl+C` produces `0x03`.
+3. **Symbol Table Tests**:
+   - Verify `Alt + Q..P` produces `'1'`..`'0'`.
+   - Verify `Alt + Dot` produces `','`.
+   - Verify `Alt + A..L` produces `~ ! @ # $ % ^ & *`.
+   - Verify `Sym + letter` produces extended bracket/quote symbols.
+4. **Shortcut Registry Tests**:
+   - Verify `Alt + G` triggers `ShortcutAction::Ghostbuster`.
+   - Verify `VolumeUp` / `VolumeDown` trigger volume shortcut actions.
+   - Verify custom handler callback invocation with `user_data`.
+5. **Full KeyboardManager Integration**:
+   - Stream raw evdev sequence through `FakeInputDevice`; assert `KeyEvent`s emitted with correct text and modifier flags.
+6. **Host & Target Verification**:
+   - Host unit test run: `ctest --output-on-failure`.
+   - ARMv6 cross-compilation check:
+     `cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/Toolchain-Kindle-ARMv6.cmake && make kindle_native`.

@@ -21,6 +21,7 @@ add_library(kindle_native STATIC
     src/ghosting.cpp
     src/bitmap_font.cpp
     src/keyboard_translator.cpp
+    src/input_debouncer.cpp
     src/audio.cpp
     src/audio_loader.cpp
     platform/fake/fake_procfs.cpp
@@ -92,6 +93,10 @@ add_test(NAME test_bitmap_font COMMAND test_bitmap_font)
 add_executable(test_audio tests/test_audio.cpp)
 target_link_libraries(test_audio kindle_native)
 add_test(NAME test_audio COMMAND test_audio)
+
+add_executable(test_keyboard_manager tests/test_keyboard_manager.cpp)
+target_link_libraries(test_keyboard_manager kindle_native)
+add_test(NAME test_keyboard_manager COMMAND test_keyboard_manager)
 
 add_executable(kindle_daemon src/kindle_daemon_main.cpp)
 target_link_libraries(kindle_daemon kindle_native)

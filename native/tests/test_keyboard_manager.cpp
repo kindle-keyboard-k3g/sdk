@@ -1,6 +1,7 @@
 #include "kindle/input.hpp"
 #include "kindle/input_debouncer.hpp"
 #include "kindle/modifier_tracker.hpp"
+#include "kindle/shortcut_registry.hpp"
 #include <cassert>
 #include <iostream>
 
@@ -130,12 +131,51 @@ void test_modifier_tracker_sticky_once() {
     std::cout << "PASS: test_modifier_tracker_sticky_once\n";
 }
 
+void test_shortcut_registry() {
+    std::cout << "Testing ShortcutRegistry pre-bound shortcuts and custom callbacks...\n";
+    kindle::ShortcutRegistry registry;
+
+    kindle::ModifierState alt_mods{};
+    alt_mods.alt = true;
+
+    kindle::ModifierState no_mods{};
+
+    // Alt+G triggers Ghostbuster
+    assert(registry.check(kindle::KeyCode::G, alt_mods) == kindle::ShortcutAction::Ghostbuster);
+    assert(registry.check(kindle::KeyCode::G, no_mods) == kindle::ShortcutAction::None);
+
+    // Volume keys
+    assert(registry.check(kindle::KeyCode::VolumeUp, no_mods) == kindle::ShortcutAction::VolumeUp);
+    assert(registry.check(kindle::KeyCode::VolumeDown, no_mods) == kindle::ShortcutAction::VolumeDown);
+
+    // Custom callback test
+    int callback_invocations = 0;
+    auto handler = [](void* user_data) {
+        auto* count = static_cast<int*>(user_data);
+        ++(*count);
+    };
+
+    kindle::ModifierState ctrl_mods{};
+    ctrl_mods.ctrl = true;
+
+    assert(registry.bind_callback(ctrl_mods.to_mask(), kindle::KeyCode::Q, handler, &callback_invocations));
+    assert(registry.check(kindle::KeyCode::Q, ctrl_mods) == kindle::ShortcutAction::None);
+    assert(callback_invocations == 1);
+
+    // Re-check with no mods -> handler not called
+    registry.check(kindle::KeyCode::Q, no_mods);
+    assert(callback_invocations == 1);
+
+    std::cout << "PASS: test_shortcut_registry\n";
+}
+
 int main() {
     test_debouncer_bounce();
     test_debouncer_repeat_disabled();
     test_debouncer_repeat_timing();
     test_modifier_tracker_disabled();
     test_modifier_tracker_sticky_once();
-    std::cout << "All InputDebouncer and ModifierTracker tests passed.\n";
+    test_shortcut_registry();
+    std::cout << "All InputDebouncer, ModifierTracker, and ShortcutRegistry tests passed.\n";
     return 0;
 }

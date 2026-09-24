@@ -6,6 +6,11 @@
 #include <linux/input.h>
 #include <algorithm>
 
+#ifndef input_event_sec
+#define input_event_sec time.tv_sec
+#define input_event_usec time.tv_usec
+#endif
+
 namespace kindle {
 
 LinuxEvdevInputDevice::LinuxEvdevInputDevice(
@@ -133,8 +138,8 @@ bool LinuxEvdevInputDevice::poll_event(InputEvent& out_event, int timeout_ms) {
                         }
 
                         KeyCode key = KeyCatalog::map_scancode(buf[j].code, model_);
-                        uint64_t ts_us = static_cast<uint64_t>(buf[j].time.tv_sec) * 1000000ULL +
-                                         static_cast<uint64_t>(buf[j].time.tv_usec);
+                        uint64_t ts_us = static_cast<uint64_t>(buf[j].input_event_sec) * 1000000ULL +
+                                         static_cast<uint64_t>(buf[j].input_event_usec);
                         buffered_events_.push_back(InputEvent{key, type, buf[j].code, ts_us});
                     }
                 }

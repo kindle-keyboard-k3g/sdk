@@ -232,6 +232,140 @@ void test_keyboard_manager_pipeline() {
     std::cout << "PASS: test_keyboard_manager_pipeline\n";
 }
 
+void test_consumer_recipe_dino() {
+    std::cout << "Testing Consumer Recipe: dino (Game sound and jump/duck control)...\n";
+    kindle::FakeInputDevice fake;
+    assert(fake.open());
+
+    // Dino recipe: repeat disabled, latch disabled for minimum latency
+    kindle::DebounceConfig deb_cfg;
+    deb_cfg.repeat_enabled = false;
+    deb_cfg.debounce_ms = 0;
+    kindle::KeyboardManager mgr(fake, kindle::DeviceModel::Kindle3, deb_cfg, kindle::LatchMode::Disabled);
+
+    bool jump_called = false;
+    bool duck_called = false;
+    uint8_t volume = 50;
+
+    // Simulate game event loop reading from KeyboardManager
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_SPACE, 1); // Jump with Space
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_D, 1); // Duck press with D
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_D, 0); // Duck release
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_VOL_UP, 1); // VolumeUp
+
+    kindle::KeyEvent ev;
+    // 1. Jump
+    assert(mgr.poll(ev));
+    if (ev.key == kindle::KeyCode::Space && ev.type == kindle::KeyEventType::Press) {
+        jump_called = true;
+    }
+    assert(jump_called);
+
+    // 2. Duck Press
+    assert(mgr.poll(ev));
+    if (ev.key == kindle::KeyCode::D && ev.type == kindle::KeyEventType::Press) {
+        duck_called = true;
+    }
+    assert(duck_called);
+
+    // 3. Duck Release
+    assert(mgr.poll(ev));
+    if (ev.key == kindle::KeyCode::D && ev.type == kindle::KeyEventType::Release) {
+        duck_called = false;
+    }
+    assert(!duck_called);
+
+    // 4. Volume Up
+    assert(mgr.poll(ev));
+    if (ev.shortcut_action == kindle::ShortcutAction::VolumeUp) {
+        volume = (volume <= 90) ? volume + 10 : 100;
+    }
+    assert(volume == 60);
+
+    fake.close();
+    std::cout << "PASS: test_consumer_recipe_dino\n";
+}
+
+void test_consumer_recipe_papergram() {
+    std::cout << "Testing Consumer Recipe: papergram (Messaging text input & Alt+G)...\n";
+    kindle::FakeInputDevice fake;
+    assert(fake.open());
+
+    // Papergram recipe: StickyOnce for handheld one-thumb typing
+    kindle::DebounceConfig deb_cfg;
+    deb_cfg.debounce_ms = 0;
+    kindle::KeyboardManager mgr(fake, kindle::DeviceModel::Kindle3, deb_cfg, kindle::LatchMode::StickyOnce);
+
+    std::string message_buffer;
+    bool ghostbuster_triggered = false;
+
+    // Type "Hi," -> Shift tap, H, i, Alt+Dot (comma on K3)
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 0);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_H, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_I, 1);
+    // Alt + Dot -> Comma
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_DOT, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 0);
+    // Alt + G -> Full refresh
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_G, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 0);
+
+    kindle::KeyEvent ev;
+    while (mgr.poll(ev)) {
+        if (ev.shortcut_action == kindle::ShortcutAction::Ghostbuster) {
+            ghostbuster_triggered = true;
+        } else if (!ev.text.empty() && ev.type == kindle::KeyEventType::Press) {
+            message_buffer.append(ev.text);
+        }
+    }
+
+    assert(message_buffer == "Hi,");
+    assert(ghostbuster_triggered);
+
+    fake.close();
+    std::cout << "PASS: test_consumer_recipe_papergram\n";
+}
+
+void test_consumer_recipe_kindle_myts() {
+    std::cout << "Testing Consumer Recipe: kindle-myts (Terminal ANSI escapes & Ctrl chords)...\n";
+    kindle::FakeInputDevice fake;
+    assert(fake.open());
+
+    kindle::DebounceConfig deb_cfg;
+    deb_cfg.debounce_ms = 0;
+    kindle::KeyboardManager mgr(fake, kindle::DeviceModel::Kindle3, deb_cfg, kindle::LatchMode::Disabled);
+
+    std::string pty_stream;
+
+    // 1. Up arrow -> \033[A
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_FW_UP_K3, 1);
+    // 2. Shift + Up arrow -> \033[5~ (PageUp)
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_FW_UP_K3, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 0);
+    // 3. Ctrl + C (Aa key on K3 = scancode 190) -> \x03
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_AA_CTRL_K3, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_C, 1);
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_AA_CTRL_K3, 0);
+
+    kindle::KeyEvent ev;
+    while (mgr.poll(ev)) {
+        if (!ev.text.empty() && ev.type == kindle::KeyEventType::Press) {
+            pty_stream.append(ev.text);
+        }
+    }
+
+    // Expected: \033[A (Up) + \033[5~ (PageUp) + \x03 (Ctrl+C)
+    std::string expected = "\033[A\033[5~\x03";
+    assert(pty_stream == expected);
+
+    fake.close();
+    std::cout << "PASS: test_consumer_recipe_kindle_myts\n";
+}
+
 int main() {
     test_debouncer_bounce();
     test_debouncer_repeat_disabled();
@@ -240,6 +374,9 @@ int main() {
     test_modifier_tracker_sticky_once();
     test_shortcut_registry();
     test_keyboard_manager_pipeline();
+    test_consumer_recipe_dino();
+    test_consumer_recipe_papergram();
+    test_consumer_recipe_kindle_myts();
     std::cout << "All InputDebouncer, ModifierTracker, ShortcutRegistry, and KeyboardManager tests passed.\n";
     return 0;
 }

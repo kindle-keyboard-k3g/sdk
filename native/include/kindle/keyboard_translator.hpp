@@ -36,6 +36,13 @@ private:
     std::string_view emit(const char* str) noexcept;
     std::string_view emit_char(char c) noexcept;
 
+    std::string_view translate_letters(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_alt_symbols(KeyCode key) noexcept;
+    std::string_view translate_sym_symbols(KeyCode key) noexcept;
+    std::string_view translate_numbers(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_punctuation(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_navigation(KeyCode key, const ModifierState& mods) noexcept;
+
     DeviceModel   model_;
     ModifierState mods_{};
     char          buffer_[16]{};

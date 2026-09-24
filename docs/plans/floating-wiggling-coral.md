@@ -408,3 +408,101 @@ Follow strict **Test-Driven Development (TDD)** using `FakeInputDevice`:
    - Host unit test run: `ctest --output-on-failure`.
    - ARMv6 cross-compilation check:
      `cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/Toolchain-Kindle-ARMv6.cmake && make kindle_native`.
+
+---
+
+## Task 1: Extended KeyCodes, InputEvent Timestamps, and Scancode Catalog
+
+### Description
+Extend `KeyCode` with punctuation keys (`Comma`, `Semicolon`, `Apostrophe`, `Minus`, `Equal`, `LeftBracket`, `RightBracket`, `Backslash`). Add `timestamp_us` to `InputEvent`. Add corresponding scancodes and mapping in `KeyCatalog`.
+
+### Steps
+1. In `native/tests/test_input.cpp`, add tests verifying mapping and decoding of new keycodes and timestamp preservation.
+2. Run test to verify RED state.
+3. Update `native/include/kindle/input.hpp` and `native/include/kindle/key_catalog.hpp`.
+4. Run test to verify GREEN state.
+5. Commit changes.
+
+---
+
+## Task 2: Debounce & Key-Repeat Engine (InputDebouncer)
+
+### Description
+Implement `InputDebouncer` in `native/include/kindle/input_debouncer.hpp` and `native/src/input_debouncer.cpp`. Filter mechanical bounce transitions within `debounce_ms` and regulate or disable key auto-repeats.
+
+### Steps
+1. Add initial unit tests in `native/tests/test_keyboard_manager.cpp` covering bounce rejection and repeat suppression.
+2. Run build to verify RED state (compiler or link error).
+3. Implement `InputDebouncer` in `native/include/kindle/input_debouncer.hpp` and `native/src/input_debouncer.cpp`, and add to `native/CMakeLists.txt`.
+4. Run tests to verify GREEN state.
+5. Commit changes.
+
+---
+
+## Task 3: Modifier Tracker with Sticky/Latch Mode (ModifierTracker)
+
+### Description
+Implement `ModifierTracker` in `native/include/kindle/modifier_tracker.hpp` and `native/src/modifier_tracker.cpp`. Support `LatchMode::Disabled`, `LatchMode::StickyOnce`, and `LatchMode::Lockable`.
+
+### Steps
+1. Add unit tests for `ModifierTracker` in `native/tests/test_keyboard_manager.cpp` covering standard chords, sticky-once latching, and latch consumption.
+2. Run build to verify RED state.
+3. Implement `ModifierTracker` in `native/include/kindle/modifier_tracker.hpp` and `native/src/modifier_tracker.cpp`, and add to `native/CMakeLists.txt`.
+4. Run tests to verify GREEN state.
+5. Commit changes.
+
+---
+
+## Task 4: Expanded Keyboard Translator
+
+### Description
+Update `KeyboardTranslator` in `native/src/keyboard_translator.cpp` with complete Kindle 3 `Alt+letter` chords (`Alt+Q..P` numbers, `Alt+A..L` symbols, `Alt+Z..M` math/brackets, `Alt+Dot` comma, `Alt+Slash` backslash, `Alt+Space` underscore, `Sym+letter` extended symbols, and `Shift+Arrows` page scrolling).
+
+### Steps
+1. Add tests in `native/tests/test_keyboard_translator.cpp` asserting translation of new `Alt` and `Sym` chords.
+2. Run test to verify RED state.
+3. Implement translation tables in `native/src/keyboard_translator.cpp`.
+4. Run tests to verify GREEN state.
+5. Commit changes.
+
+---
+
+## Task 5: Shortcut & Chord Registry (ShortcutRegistry)
+
+### Description
+Implement `ShortcutRegistry` in `native/include/kindle/shortcut_registry.hpp` and `native/src/shortcut_registry.cpp`. Pre-bind `Alt+G` (Ghostbuster) and Volume keys. Allow binding custom callbacks with `user_data` without dynamic allocations.
+
+### Steps
+1. Add unit tests in `native/tests/test_keyboard_manager.cpp` verifying pre-bound shortcuts and custom callbacks.
+2. Run build to verify RED state.
+3. Implement `ShortcutRegistry` in `native/include/kindle/shortcut_registry.hpp` and `native/src/shortcut_registry.cpp`, and add to `native/CMakeLists.txt`.
+4. Run tests to verify GREEN state.
+5. Commit changes.
+
+---
+
+## Task 6: Unified KeyboardManager Facade (KeyboardManager)
+
+### Description
+Implement `KeyboardManager` in `native/include/kindle/keyboard_manager.hpp` and `native/src/keyboard_manager.cpp`. Wire `InputDevice`, `InputDebouncer`, `ModifierTracker`, `ShortcutRegistry`, and `KeyboardTranslator` into a high-level `poll(KeyEvent& out_event)` pipeline.
+
+### Steps
+1. Add integration tests in `native/tests/test_keyboard_manager.cpp` verifying streaming input through `FakeInputDevice`.
+2. Run build to verify RED state.
+3. Implement `KeyboardManager` in `native/include/kindle/keyboard_manager.hpp` and `native/src/keyboard_manager.cpp`, and add to `native/CMakeLists.txt`.
+4. Run tests to verify GREEN state.
+5. Commit changes.
+
+---
+
+## Task 7: Comprehensive Test Suite & Toolchain Verification
+
+### Description
+Finalize `native/tests/test_keyboard_manager.cpp` covering all consumer recipes (`dino`, `papergram`, `kindle-myts`), register test in `native/CMakeLists.txt`, verify host test pass, and verify ARMv6 cross-compilation.
+
+### Steps
+1. Review and complete all consumer recipe test scenarios in `native/tests/test_keyboard_manager.cpp`.
+2. Run full test suite on host (`ctest --output-on-failure`).
+3. Run ARMv6 cross-compilation check.
+4. Commit changes.
+

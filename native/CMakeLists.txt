@@ -21,6 +21,8 @@ add_library(kindle_native STATIC
     src/ghosting.cpp
     src/bitmap_font.cpp
     src/keyboard_translator.cpp
+    src/audio.cpp
+    src/audio_loader.cpp
     platform/fake/fake_procfs.cpp
     platform/fake/fake_eink.cpp
     platform/fake/fake_network.cpp
@@ -28,6 +30,7 @@ add_library(kindle_native STATIC
     platform/linux/procfs.cpp
     platform/linux/framebuffer_linux.cpp
     platform/linux/evdev_linux.cpp
+    platform/linux/oss_audio_linux.cpp
 )
 
 if(KINDLE_NETWORK_WITH_OPENSSL)
@@ -85,6 +88,10 @@ add_test(NAME test_ghosting COMMAND test_ghosting)
 add_executable(test_bitmap_font tests/test_bitmap_font.cpp)
 target_link_libraries(test_bitmap_font kindle_native)
 add_test(NAME test_bitmap_font COMMAND test_bitmap_font)
+
+add_executable(test_audio tests/test_audio.cpp)
+target_link_libraries(test_audio kindle_native)
+add_test(NAME test_audio COMMAND test_audio)
 
 add_executable(kindle_daemon src/kindle_daemon_main.cpp)
 target_link_libraries(kindle_daemon kindle_native)

@@ -6,6 +6,11 @@
 #include <linux/input.h>
 #include <algorithm>
 
+#ifndef input_event_sec
+#define input_event_sec time.tv_sec
+#define input_event_usec time.tv_usec
+#endif
+
 namespace kindle {
 
 LinuxEvdevInputDevice::LinuxEvdevInputDevice(
@@ -14,9 +19,7 @@ LinuxEvdevInputDevice::LinuxEvdevInputDevice(
     DeviceModel model)
     : device_paths_(std::move(device_paths)),
       grab_exclusive_(grab_exclusive),
-      model_(model) {
-    buffered_events_.reserve(16);
-}
+      model_(model) {}
 
 LinuxEvdevInputDevice::~LinuxEvdevInputDevice() {
     close();
@@ -58,7 +61,8 @@ void LinuxEvdevInputDevice::close() {
         }
     }
     fds_.clear();
-    buffered_events_.clear();
+    buffer_head_ = 0;
+    buffer_count_ = 0;
 }
 
 bool LinuxEvdevInputDevice::grab() {
@@ -92,9 +96,10 @@ bool LinuxEvdevInputDevice::poll_event(InputEvent& out_event) {
 }
 
 bool LinuxEvdevInputDevice::poll_event(InputEvent& out_event, int timeout_ms) {
-    if (!buffered_events_.empty()) {
-        out_event = buffered_events_.front();
-        buffered_events_.erase(buffered_events_.begin());
+    if (buffer_count_ > 0) {
+        out_event = buffered_events_[buffer_head_];
+        buffer_head_ = (buffer_head_ + 1) % BUFFER_CAPACITY;
+        --buffer_count_;
         return true;
     }
 
@@ -133,16 +138,23 @@ bool LinuxEvdevInputDevice::poll_event(InputEvent& out_event, int timeout_ms) {
                         }
 
                         KeyCode key = KeyCatalog::map_scancode(buf[j].code, model_);
-                        buffered_events_.push_back(InputEvent{key, type, buf[j].code});
+                        uint64_t ts_us = static_cast<uint64_t>(buf[j].input_event_sec) * 1000000ULL +
+                                         static_cast<uint64_t>(buf[j].input_event_usec);
+                        if (buffer_count_ < BUFFER_CAPACITY) {
+                            size_t tail = (buffer_head_ + buffer_count_) % BUFFER_CAPACITY;
+                            buffered_events_[tail] = InputEvent{key, type, buf[j].code, ts_us};
+                            ++buffer_count_;
+                        }
                     }
                 }
             }
         }
     }
 
-    if (!buffered_events_.empty()) {
-        out_event = buffered_events_.front();
-        buffered_events_.erase(buffered_events_.begin());
+    if (buffer_count_ > 0) {
+        out_event = buffered_events_[buffer_head_];
+        buffer_head_ = (buffer_head_ + 1) % BUFFER_CAPACITY;
+        --buffer_count_;
         return true;
     }
 

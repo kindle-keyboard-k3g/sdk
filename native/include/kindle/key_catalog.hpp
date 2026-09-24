@@ -56,11 +56,19 @@ struct KeyCatalog {
     static constexpr uint16_t CODE_KEY_M = 50;
 
     // Punctuation & Editing
-    static constexpr uint16_t CODE_BACKSPACE = 14;
-    static constexpr uint16_t CODE_ENTER     = 28;
-    static constexpr uint16_t CODE_SPACE     = 57;
-    static constexpr uint16_t CODE_DOT       = 52;
-    static constexpr uint16_t CODE_SLASH     = 53;
+    static constexpr uint16_t CODE_MINUS        = 12;
+    static constexpr uint16_t CODE_EQUAL        = 13;
+    static constexpr uint16_t CODE_BACKSPACE    = 14;
+    static constexpr uint16_t CODE_LEFTBRACKET  = 26;
+    static constexpr uint16_t CODE_RIGHTBRACKET = 27;
+    static constexpr uint16_t CODE_ENTER        = 28;
+    static constexpr uint16_t CODE_SEMICOLON    = 39;
+    static constexpr uint16_t CODE_APOSTROPHE   = 40;
+    static constexpr uint16_t CODE_BACKSLASH    = 43;
+    static constexpr uint16_t CODE_COMMA        = 51;
+    static constexpr uint16_t CODE_DOT          = 52;
+    static constexpr uint16_t CODE_SLASH        = 53;
+    static constexpr uint16_t CODE_SPACE        = 57;
 
     // Modifiers
     static constexpr uint16_t CODE_SHIFT_L   = 42;
@@ -184,11 +192,19 @@ struct KeyCatalog {
             case CODE_KEY_N: return KeyCode::N;
             case CODE_KEY_M: return KeyCode::M;
 
-            case CODE_BACKSPACE: return KeyCode::Backspace;
-            case CODE_ENTER:     return KeyCode::Enter;
-            case CODE_SPACE:     return KeyCode::Space;
-            case CODE_DOT:       return KeyCode::Dot;
-            case CODE_SLASH:     return KeyCode::Slash;
+            case CODE_BACKSPACE:    return KeyCode::Backspace;
+            case CODE_ENTER:        return KeyCode::Enter;
+            case CODE_SPACE:        return KeyCode::Space;
+            case CODE_DOT:          return KeyCode::Dot;
+            case CODE_SLASH:        return KeyCode::Slash;
+            case CODE_COMMA:        return KeyCode::Comma;
+            case CODE_SEMICOLON:    return KeyCode::Semicolon;
+            case CODE_APOSTROPHE:   return KeyCode::Apostrophe;
+            case CODE_MINUS:        return KeyCode::Minus;
+            case CODE_EQUAL:        return KeyCode::Equal;
+            case CODE_LEFTBRACKET:  return KeyCode::LeftBracket;
+            case CODE_RIGHTBRACKET: return KeyCode::RightBracket;
+            case CODE_BACKSLASH:    return KeyCode::Backslash;
 
             case CODE_SHIFT_L:
             case CODE_SHIFT_R:

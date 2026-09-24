@@ -105,6 +105,12 @@ int main() {
     struct input_event ev_left{ {}, EV_KEY, 105, 1 }; // 5-way Left
     assert(translator.process_event(ev_left) == "\033[D");
 
+    // Shift + Up/Down -> PageUp / PageDown
+    translator.process_event(ev_shift_press);
+    assert(translator.process_event(ev_up) == "\033[5~");
+    assert(translator.process_event(ev_down) == "\033[6~");
+    translator.process_event(ev_shift_release);
+
     // 6. Enter, Space, Del, Dot, Slash
     struct input_event ev_enter{ {}, EV_KEY, 28, 1 };
     assert(translator.process_event(ev_enter) == "\r");
@@ -126,7 +132,107 @@ int main() {
     assert(translator.process_event(ev_slash) == "?");
     translator.process_event(ev_shift_release);
 
-    // 7. Kindle DX Model tests
+    // 7. Alt Chords (Numbers, Symbols, Brackets, Comma)
+    struct input_event ev_alt_press{ {}, EV_KEY, 56, 1 }; // Alt press
+    struct input_event ev_alt_release{ {}, EV_KEY, 56, 0 }; // Alt release
+
+    translator.process_event(ev_alt_press);
+    assert(translator.modifiers().alt);
+
+    struct input_event ev_q{ {}, EV_KEY, 16, 1 };
+    assert(translator.process_event(ev_q) == "1");
+
+    struct input_event ev_w{ {}, EV_KEY, 17, 1 };
+    assert(translator.process_event(ev_w) == "2");
+
+    struct input_event ev_p{ {}, EV_KEY, 25, 1 };
+    assert(translator.process_event(ev_p) == "0");
+
+    assert(translator.process_event(ev_a) == "~");
+
+    struct input_event ev_s{ {}, EV_KEY, 31, 1 };
+    assert(translator.process_event(ev_s) == "!");
+
+    struct input_event ev_d{ {}, EV_KEY, 32, 1 };
+    assert(translator.process_event(ev_d) == "@");
+
+    struct input_event ev_g{ {}, EV_KEY, 34, 1 };
+    assert(translator.process_event(ev_g) == "$");
+
+    assert(translator.process_event(ev_z) == "(");
+    assert(translator.process_event(ev_c) == "-");
+
+    struct input_event ev_v{ {}, EV_KEY, 47, 1 };
+    assert(translator.process_event(ev_v) == "+");
+
+    struct input_event ev_b{ {}, EV_KEY, 48, 1 };
+    assert(translator.process_event(ev_b) == "=");
+
+    struct input_event ev_n{ {}, EV_KEY, 49, 1 };
+    assert(translator.process_event(ev_n) == "[");
+
+    struct input_event ev_m{ {}, EV_KEY, 50, 1 };
+    assert(translator.process_event(ev_m) == "]");
+
+    // Alt + Dot -> ','
+    assert(translator.process_event(ev_dot) == ",");
+
+    // Alt + Slash -> '\'
+    assert(translator.process_event(ev_slash) == "\\");
+
+    // Alt + Space -> '_'
+    assert(translator.process_event(ev_space) == "_");
+
+    translator.process_event(ev_alt_release);
+    assert(!translator.modifiers().alt);
+
+    // 8. Sym Chords
+    struct input_event ev_sym_press{ {}, EV_KEY, 126, 1 }; // Sym K3
+    struct input_event ev_sym_release{ {}, EV_KEY, 126, 0 };
+
+    translator.process_event(ev_sym_press);
+    assert(translator.modifiers().sym);
+    assert(translator.process_event(ev_q) == "{");
+    assert(translator.process_event(ev_w) == "}");
+
+    struct input_event ev_e{ {}, EV_KEY, 18, 1 };
+    assert(translator.process_event(ev_e) == "<");
+
+    struct input_event ev_r{ {}, EV_KEY, 19, 1 };
+    assert(translator.process_event(ev_r) == ">");
+
+    struct input_event ev_t{ {}, EV_KEY, 20, 1 };
+    assert(translator.process_event(ev_t) == ";");
+
+    struct input_event ev_y{ {}, EV_KEY, 21, 1 };
+    assert(translator.process_event(ev_y) == ":");
+
+    struct input_event ev_u{ {}, EV_KEY, 22, 1 };
+    assert(translator.process_event(ev_u) == "'");
+
+    struct input_event ev_i{ {}, EV_KEY, 23, 1 };
+    assert(translator.process_event(ev_i) == "\"");
+
+    struct input_event ev_o{ {}, EV_KEY, 24, 1 };
+    assert(translator.process_event(ev_o) == "`");
+
+    assert(translator.process_event(ev_p) == "|");
+
+    translator.process_event(ev_sym_release);
+    assert(!translator.modifiers().sym);
+
+    // 9. Direct punctuation KeyCodes
+    kindle::ModifierState no_mods{};
+    assert(translator.translate(kindle::KeyCode::Comma, no_mods) == ",");
+    assert(translator.translate(kindle::KeyCode::Semicolon, no_mods) == ";");
+    assert(translator.translate(kindle::KeyCode::Apostrophe, no_mods) == "'");
+    assert(translator.translate(kindle::KeyCode::Minus, no_mods) == "-");
+    assert(translator.translate(kindle::KeyCode::Equal, no_mods) == "=");
+    assert(translator.translate(kindle::KeyCode::LeftBracket, no_mods) == "[");
+    assert(translator.translate(kindle::KeyCode::RightBracket, no_mods) == "]");
+    assert(translator.translate(kindle::KeyCode::Backslash, no_mods) == "\\");
+
+    // 10. Kindle DX Model tests
     kindle::KeyboardTranslator dx_translator(kindle::DeviceModel::KindleDX);
     // Aa / Ctrl on DX is scancode 90
     struct input_event ev_dx_aa{ {}, EV_KEY, 90, 1 };

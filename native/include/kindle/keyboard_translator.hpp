@@ -1,25 +1,12 @@
 #pragma once
 #include "kindle/input.hpp"
 #include "kindle/key_catalog.hpp"
+#include "kindle/modifier_tracker.hpp"
 #include <linux/input.h>
 #include <string_view>
 #include <cstdint>
 
 namespace kindle {
-
-/**
- * Tracks the real-time active state of keyboard modifiers.
- */
-struct ModifierState {
-    bool shift{false};
-    bool ctrl{false};
-    bool alt{false};
-    bool sym{false};
-
-    [[nodiscard]] uint8_t to_mask() const noexcept {
-        return (shift ? 1 : 0) | (ctrl ? 2 : 0) | (alt ? 4 : 0) | (sym ? 8 : 0);
-    }
-};
 
 /**
  * Translates low-level Linux evdev input events or KeyCode pairs into ASCII characters,
@@ -48,6 +35,13 @@ private:
     void update_modifier(uint16_t code, bool active) noexcept;
     std::string_view emit(const char* str) noexcept;
     std::string_view emit_char(char c) noexcept;
+
+    std::string_view translate_letters(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_alt_symbols(KeyCode key) noexcept;
+    std::string_view translate_sym_symbols(KeyCode key) noexcept;
+    std::string_view translate_numbers(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_punctuation(KeyCode key, const ModifierState& mods) noexcept;
+    std::string_view translate_navigation(KeyCode key, const ModifierState& mods) noexcept;
 
     DeviceModel   model_;
     ModifierState mods_{};

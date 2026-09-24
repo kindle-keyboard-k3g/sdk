@@ -1,129 +1,152 @@
-#include "kindle/input.hpp"
+#include "kindle/linux_input.hpp"
 #include <fcntl.h>
 #include <unistd.h>
+#include <poll.h>
+#include <sys/ioctl.h>
 #include <linux/input.h>
-#include <cstring>
-#include <vector>
+#include <algorithm>
 
 namespace kindle {
 
-// Standard Linux input keycodes mapping to Kindle physical keys
-// Kindle Keyboard / DX keycodes from /dev/input/event0
-#ifndef KEY_PREVIOUSSONG
-#define KEY_PREVIOUSSONG 0x0a5
-#endif
-#ifndef KEY_NEXTSONG
-#define KEY_NEXTSONG 0x0a3
-#endif
-
-inline KeyCode map_linux_code_to_kindle(uint16_t code) {
-    switch (code) {
-        case KEY_UP:
-            return KeyCode::Up;
-        case KEY_DOWN:
-            return KeyCode::Down;
-        case KEY_LEFT:
-            return KeyCode::Left;
-        case KEY_RIGHT:
-            return KeyCode::Right;
-        case KEY_ENTER:
-        case KEY_OK:
-            return KeyCode::Select;
-        case KEY_PAGEUP:
-        case KEY_PREVIOUSSONG: // Often mapped for page back button on K3
-            return KeyCode::PageUp;
-        case KEY_PAGEDOWN:
-        case KEY_NEXTSONG:     // Often mapped for page forward button on K3
-            return KeyCode::PageDown;
-        case KEY_BACK:
-        case KEY_ESC:
-            return KeyCode::Back;
-        case KEY_MENU:
-            return KeyCode::Menu;
-        case KEY_HOMEPAGE:
-            return KeyCode::Home;
-        default:
-            return KeyCode::Unknown;
-    }
+LinuxEvdevInputDevice::LinuxEvdevInputDevice(
+    std::vector<std::string> device_paths,
+    bool grab_exclusive,
+    DeviceModel model)
+    : device_paths_(std::move(device_paths)),
+      grab_exclusive_(grab_exclusive),
+      model_(model) {
+    buffered_events_.reserve(16);
 }
 
-inline KeyEventType map_linux_value_to_type(int32_t val) {
-    if (val == 1) return KeyEventType::Press;
-    if (val == 2) return KeyEventType::Repeat;
-    return KeyEventType::Release;
+LinuxEvdevInputDevice::~LinuxEvdevInputDevice() {
+    close();
 }
 
-class LinuxEvdevInputDevice : public InputDevice {
-public:
-    LinuxEvdevInputDevice() : fd_(-1) {}
+bool LinuxEvdevInputDevice::open(const std::string& single_path) {
+    device_paths_ = {single_path};
+    return open_devices();
+}
 
-    ~LinuxEvdevInputDevice() override {
-        close();
-    }
-
-    bool open(const std::string& device_path = "/dev/input/event0") override {
-        fd_ = ::open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
-        return fd_ >= 0;
-    }
-
-    void close() override {
-        if (fd_ >= 0) {
-            ::close(fd_);
-            fd_ = -1;
+bool LinuxEvdevInputDevice::open_devices() {
+    close();
+    for (const auto& path : device_paths_) {
+        int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK);
+        if (fd >= 0) {
+            fds_.push_back(fd);
         }
     }
 
-    bool poll_event(InputEvent& out_event) override {
-        if (fd_ < 0) return false;
-
-        struct input_event ev;
-        ssize_t bytes = ::read(fd_, &ev, sizeof(ev));
-        if (bytes == sizeof(ev)) {
-            if (ev.type == EV_KEY) {
-                out_event.key = map_linux_code_to_kindle(ev.code);
-                out_event.type = map_linux_value_to_type(ev.value);
-                return true;
-            }
-        }
+    if (fds_.empty()) {
         return false;
     }
 
-private:
-    int fd_;
-};
-
-class FakeInputDevice : public InputDevice {
-public:
-    FakeInputDevice() : is_open_(false) {}
-
-    bool open(const std::string& device_path) override {
-        is_open_ = true;
-        return true;
+    if (grab_exclusive_) {
+        grab();
     }
 
-    void close() override {
-        is_open_ = false;
+    return true;
+}
+
+void LinuxEvdevInputDevice::close() {
+    if (grabbed_) {
+        release();
     }
 
-    void inject_raw_event(uint16_t code, int32_t value) {
-        InputEvent ev;
-        ev.key = map_linux_code_to_kindle(code);
-        ev.type = map_linux_value_to_type(value);
-        queued_events_.push_back(ev);
-    }
-
-    bool poll_event(InputEvent& out_event) override {
-        if (!is_open_ || queued_events_.empty()) {
-            return false;
+    for (int fd : fds_) {
+        if (fd >= 0) {
+            ::close(fd);
         }
-        out_event = queued_events_.front();
-        queued_events_.erase(queued_events_.begin());
+    }
+    fds_.clear();
+    buffered_events_.clear();
+}
+
+bool LinuxEvdevInputDevice::grab() {
+    bool all_ok = true;
+    for (int fd : fds_) {
+        if (fd >= 0) {
+            if (::ioctl(fd, EVIOCGRAB, 1) < 0) {
+                all_ok = false;
+            }
+        }
+    }
+    grabbed_ = true;
+    return all_ok;
+}
+
+bool LinuxEvdevInputDevice::release() {
+    bool all_ok = true;
+    for (int fd : fds_) {
+        if (fd >= 0) {
+            if (::ioctl(fd, EVIOCGRAB, 0) < 0) {
+                all_ok = false;
+            }
+        }
+    }
+    grabbed_ = false;
+    return all_ok;
+}
+
+bool LinuxEvdevInputDevice::poll_event(InputEvent& out_event) {
+    return poll_event(out_event, 0);
+}
+
+bool LinuxEvdevInputDevice::poll_event(InputEvent& out_event, int timeout_ms) {
+    if (!buffered_events_.empty()) {
+        out_event = buffered_events_.front();
+        buffered_events_.erase(buffered_events_.begin());
         return true;
     }
 
-private:
-    bool is_open_;
-    std::vector<InputEvent> queued_events_;
-};
+    if (fds_.empty()) {
+        return false;
+    }
+
+    constexpr size_t MAX_FDS = 16;
+    struct pollfd pfd[MAX_FDS];
+    nfds_t nfds = static_cast<nfds_t>(std::min(fds_.size(), MAX_FDS));
+
+    for (nfds_t i = 0; i < nfds; ++i) {
+        pfd[i].fd = fds_[i];
+        pfd[i].events = POLLIN;
+        pfd[i].revents = 0;
+    }
+
+    int ret = ::poll(pfd, nfds, timeout_ms);
+    if (ret <= 0) {
+        return false;
+    }
+
+    struct input_event buf[8];
+    for (nfds_t i = 0; i < nfds; ++i) {
+        if (pfd[i].revents & POLLIN) {
+            ssize_t bytes = ::read(pfd[i].fd, buf, sizeof(buf));
+            if (bytes > 0) {
+                size_t n_events = static_cast<size_t>(bytes) / sizeof(struct input_event);
+                for (size_t j = 0; j < n_events; ++j) {
+                    if (buf[j].type == EV_KEY) {
+                        KeyEventType type = KeyEventType::Release;
+                        if (buf[j].value == 1) {
+                            type = KeyEventType::Press;
+                        } else if (buf[j].value == 2) {
+                            type = KeyEventType::Repeat;
+                        }
+
+                        KeyCode key = KeyCatalog::map_scancode(buf[j].code, model_);
+                        buffered_events_.push_back(InputEvent{key, type, buf[j].code});
+                    }
+                }
+            }
+        }
+    }
+
+    if (!buffered_events_.empty()) {
+        out_event = buffered_events_.front();
+        buffered_events_.erase(buffered_events_.begin());
+        return true;
+    }
+
+    return false;
+}
 
 } // namespace kindle

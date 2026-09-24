@@ -7,24 +7,49 @@ namespace kindle {
 /**
  * Hardware key codes for Kindle keypad and button events.
  */
-enum class KeyCode {
-    Up,        ///< 5-way D-Pad Up
-    Down,      ///< 5-way D-Pad Down
-    Left,      ///< 5-way D-Pad Left
-    Right,     ///< 5-way D-Pad Right
-    Select,    ///< 5-way D-Pad Center Select
-    PageUp,    ///< Previous page button
-    PageDown,  ///< Next page button
-    Back,      ///< Dedicated Back button
-    Menu,      ///< Menu button
-    Home,      ///< Home button
-    Unknown    ///< Unrecognized or unsupported scan code
+enum class KeyCode : uint16_t {
+    // Alphanumeric keys
+    A, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+
+    // Punctuation & Editing
+    Enter,
+    Space,
+    Backspace,
+    Dot,
+    Slash,
+
+    // Modifiers
+    Shift,
+    Alt,
+    Sym,
+    Ctrl,
+
+    // Navigation & Kindle Buttons
+    Up,
+    Down,
+    Left,
+    Right,
+    Select,
+    PageUp,
+    PageDown,
+    Back,
+    Menu,
+    Home,
+
+    // Hardware functions
+    VolumeUp,
+    VolumeDown,
+    Power,
+
+    Unknown
 };
 
 /**
  * Key press, release, and auto-repeat event classifications.
  */
-enum class KeyEventType {
+enum class KeyEventType : uint8_t {
     Press,   ///< Key pressed down
     Release, ///< Key released
     Repeat   ///< Key held down and repeating
@@ -34,8 +59,9 @@ enum class KeyEventType {
  * Decoded keyboard or hardware button event.
  */
 struct InputEvent {
-    KeyCode key;        ///< Hardware key code
-    KeyEventType type;  ///< Event action type (press, release, repeat)
+    KeyCode key{KeyCode::Unknown};       ///< Hardware key code
+    KeyEventType type{KeyEventType::Press}; ///< Event action type (press, release, repeat)
+    uint16_t raw_code{0};                ///< Raw Linux evdev scancode
 };
 
 /**

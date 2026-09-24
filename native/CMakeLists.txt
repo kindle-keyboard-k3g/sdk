@@ -20,9 +20,11 @@ add_library(kindle_native STATIC
     src/refresh_policy.cpp
     src/ghosting.cpp
     src/bitmap_font.cpp
+    src/keyboard_translator.cpp
     platform/fake/fake_procfs.cpp
     platform/fake/fake_eink.cpp
     platform/fake/fake_network.cpp
+    platform/fake/fake_input.cpp
     platform/linux/procfs.cpp
     platform/linux/framebuffer_linux.cpp
     platform/linux/evdev_linux.cpp
@@ -51,6 +53,10 @@ add_test(NAME test_ipc COMMAND test_ipc)
 add_executable(test_input tests/test_input.cpp)
 target_link_libraries(test_input kindle_native)
 add_test(NAME test_input COMMAND test_input)
+
+add_executable(test_keyboard_translator tests/test_keyboard_translator.cpp)
+target_link_libraries(test_keyboard_translator kindle_native)
+add_test(NAME test_keyboard_translator COMMAND test_keyboard_translator)
 
 add_executable(test_network tests/test_network.cpp)
 target_link_libraries(test_network kindle_native)

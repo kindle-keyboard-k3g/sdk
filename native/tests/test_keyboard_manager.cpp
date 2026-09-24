@@ -1,7 +1,9 @@
 #include "kindle/input.hpp"
+#include "kindle/fake_input.hpp"
 #include "kindle/input_debouncer.hpp"
 #include "kindle/modifier_tracker.hpp"
 #include "kindle/shortcut_registry.hpp"
+#include "kindle/keyboard_manager.hpp"
 #include <cassert>
 #include <iostream>
 
@@ -169,6 +171,67 @@ void test_shortcut_registry() {
     std::cout << "PASS: test_shortcut_registry\n";
 }
 
+void test_keyboard_manager_pipeline() {
+    std::cout << "Testing KeyboardManager unified pipeline...\n";
+    kindle::FakeInputDevice fake;
+    assert(fake.open());
+
+    kindle::DebounceConfig deb_cfg;
+    deb_cfg.debounce_ms = 0; // immediate for testing
+    kindle::KeyboardManager mgr(fake, kindle::DeviceModel::Kindle3, deb_cfg, kindle::LatchMode::Disabled);
+
+    // 1. Regular character typing
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_A, 1); // Press 'A'
+    kindle::KeyEvent ev;
+    assert(mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::A);
+    assert(ev.type == kindle::KeyEventType::Press);
+    assert(ev.text == "a");
+    assert(!ev.is_shortcut);
+
+    // 2. Alt+G Ghostbuster shortcut
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 1); // Press Alt
+    assert(mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::Alt);
+
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_G, 1); // Press G
+    assert(mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::G);
+    assert(ev.is_shortcut);
+    assert(ev.shortcut_action == kindle::ShortcutAction::Ghostbuster);
+    assert(ev.text.empty());
+
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_ALT_L, 0); // Release Alt
+    assert(mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::Alt);
+
+    // 3. StickyOnce mode test
+    kindle::KeyboardManager sticky_mgr(fake, kindle::DeviceModel::Kindle3, deb_cfg, kindle::LatchMode::StickyOnce);
+
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 1); // Press Shift
+    assert(sticky_mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::Shift);
+
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_SHIFT_L, 0); // Release Shift -> now latched!
+    assert(sticky_mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::Shift);
+    assert(sticky_mgr.modifiers().shift);
+
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_A, 1); // Press 'a' -> should be uppercase 'A'
+    assert(sticky_mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::A);
+    assert(ev.text == "A");
+
+    // Next key should be lowercase because latch was consumed
+    fake.inject_raw_event(kindle::KeyCatalog::CODE_KEY_B, 1); // Press 'b'
+    assert(sticky_mgr.poll(ev));
+    assert(ev.key == kindle::KeyCode::B);
+    assert(ev.text == "b");
+
+    fake.close();
+    std::cout << "PASS: test_keyboard_manager_pipeline\n";
+}
+
 int main() {
     test_debouncer_bounce();
     test_debouncer_repeat_disabled();
@@ -176,6 +239,7 @@ int main() {
     test_modifier_tracker_disabled();
     test_modifier_tracker_sticky_once();
     test_shortcut_registry();
-    std::cout << "All InputDebouncer, ModifierTracker, and ShortcutRegistry tests passed.\n";
+    test_keyboard_manager_pipeline();
+    std::cout << "All InputDebouncer, ModifierTracker, ShortcutRegistry, and KeyboardManager tests passed.\n";
     return 0;
 }

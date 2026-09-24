@@ -62,4 +62,14 @@ ShortcutAction ShortcutRegistry::check(KeyCode key, const ModifierState& mods) n
     return ShortcutAction::None;
 }
 
+bool ShortcutRegistry::has_binding(KeyCode key, const ModifierState& mods) const noexcept {
+    uint8_t mask = mods.to_mask();
+    for (size_t i = 0; i < count_; ++i) {
+        if (bindings_[i].key == key && bindings_[i].mod_mask == mask) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace kindle

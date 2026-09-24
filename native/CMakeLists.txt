@@ -24,6 +24,7 @@ add_library(kindle_native STATIC
     src/input_debouncer.cpp
     src/modifier_tracker.cpp
     src/shortcut_registry.cpp
+    src/keyboard_manager.cpp
     src/audio.cpp
     src/audio_loader.cpp
     platform/fake/fake_procfs.cpp

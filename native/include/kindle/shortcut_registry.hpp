@@ -63,6 +63,11 @@ public:
      */
     ShortcutAction check(KeyCode key, const ModifierState& mods) noexcept;
 
+    /**
+     * Checks whether a shortcut or callback is bound to the given key and modifier combination.
+     */
+    [[nodiscard]] bool has_binding(KeyCode key, const ModifierState& mods) const noexcept;
+
 private:
     void register_defaults() noexcept;
 
